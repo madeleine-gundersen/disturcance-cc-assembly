@@ -1,0 +1,173 @@
+---
+title: "2_overview-dataset-and-alphadiv"
+---
+
+# the dataset 
+```{r}
+#load raw and normalised experiment
+exp = readRDS("sel_cc_exp.rds")
+exp_nor = readRDS("sel_cc_exp_nor.rds")
+
+# numer of seuence reads
+sum(phyloseq::sample_sums(exp))
+# mean sequence read
+mean(phyloseq::sample_sums(exp))
+# sd 
+sd(phyloseq::sample_sums(exp))
+#number of taxa in dataset 
+ntaxa(exp)
+ntaxa(exp_nor)
+
+# taxa without day 0 and 1 
+exp.n01 = subset_samples(exp_nor, Day > 1)
+exp.n01 = prune_taxa(taxa_sums(exp.n01)>0, exp.n01)
+ntaxa(exp.n01)
+
+# taxa without day 0
+exp.n0 = subset_samples(exp_nor, Day > 0)
+exp.n0 = prune_taxa(taxa_sums(exp.n0)>0, exp.n0)
+ntaxa(exp.n0)
+
+#percent taxa loss during first cultivation day
+(ntaxa(exp.n01)-ntaxa(exp.n0))*100/ntaxa(exp.n0)
+
+#bray curtis similarity between day 1 
+
+```
+
+# relationship rarified and raw dataset
+
+```{r without inoculum}
+library(phyloseq)
+library(vegan)
+exp =phyloseq::subset_samples(exp, Day != 0)
+exp_nor =phyloseq::subset_samples(exp_nor, Day != 0)
+# calculate alpha diversity of order 0-2 for the raw dataset
+OTU_table = as.data.frame(exp@otu_table)
+transposed_OTU_table = t(OTU_table) 
+hillnumbers = vegan::renyi(transposed_OTU_table, scales = c(0,1,2), hill = TRUE) #calculates diversity of different orders for the dataset 
+colnames(hillnumbers) =  c("Order0", "Order1", "Order2")
+#now we add the hillnumbers to the enviromental variables for easy plotting. 
+sample_data(exp) <- base::cbind(sample_data(exp), hillnumbers) #binds the 0D to the sample data matrix
+
+#lets save the sample data as a data.frame to insert into ggplot
+df_raw = data.frame(exp@sam_data)
+df_raw$samplename = rownames(df_raw)
+
+#calculate alpha diversity for the rarified dataset
+OTU_table = as.data.frame(exp_nor@otu_table)
+transposed_OTU_table = t(OTU_table)
+hillnumbers = vegan::renyi(transposed_OTU_table, scales = c(0,1,2), hill = TRUE) #calculates diversity of different orders for the dataset 
+colnames(hillnumbers) = c("Order0", "Order1", "Order2")
+#now we add the hillnumbers to the enviromental variables for easy plotting. 
+sample_data(exp_nor) <- cbind(sample_data(exp_nor), hillnumbers) #binds the 0D to the sample data matrix
+
+#lets save the sample data as a data.frame to insert into ggplot
+df_rarified = data.frame(exp_nor@sam_data)
+df_rarified$samplename = rownames(df_rarified)
+#df_rarified$dataset = "Normalised"
+
+# colnames(df_rarified) == colnames(df_raw)
+df_rarified2 = reshape2::melt(df_rarified, id.vars = colnames(df_rarified)[c(1:13,17)])
+colnames(df_rarified2)[15:16] = c("variable_nor", "value_nor")
+
+df_raw2 = reshape2::melt(df_raw, id.vars = colnames(df_raw)[c(1:13,17)])
+colnames(df_raw2)[15:16] = c("variable_raw", "value_raw")
+
+df_both = df_rarified2
+df_both$variable_raw = df_raw2$variable_raw
+df_both$value_raw = df_raw2$value_raw
+
+source("plot.settings.paper.R")
+library(ggpubr)
+
+suppressMessages(print(
+ggpubr::ggscatter(data = df_both, x = "value_nor", y = "value_raw",
+  add = "reg.line", 
+  legend = "right", 
+  ) +
+  my.theme + 
+  facet_wrap(~variable_nor, scales = "free") + 
+  stat_cor(label.y.npc = 0.9, size = 3) +
+  stat_regline_equation(label.y.npc = 1, size = 3) + 
+  geom_abline(slope = 1, color = "darkgrey", linetype = "dashed") + 
+  ylab("Diveristy normalised dataset") +
+  xlab("Diversity raw dataset") + 
+  theme(aspect.ratio=1, 
+        text = element_text(size = 9)) + 
+  geom_point(aes(shape = Regime, fill = Regime), size = 2, color = "black") +
+  theme(legend.key = element_rect(color="transparent")) + 
+  scale_shape_manual("Regime",
+                     labels = selection.label,
+                     values = my.selection.shapes2) + 
+  scale_fill_manual("Regime", 
+                     labels = selection.label,
+                     values = c("black", "white", "black", "white")) ))
+```
+
+
+# Alpha diversity 
+
+```{r}
+# from now on only working with normalised dataset 
+# update some metadata
+exp_nor = readRDS("sel_cc_exp_nor.rds")
+
+#changed the abbrevation from continiously supplied media to undisturbed and added some more metadata
+library(stringr)
+sample_names(exp_nor)[3:204] = stringr::str_replace(sample_names(exp_nor)[3:204], "C", "U")
+#converts your excel document to a data frame 
+variables = readxl::read_xlsx("Metadata_dist.xlsx", sheet = 1) %>% as.data.frame
+#changes the row names to the sample names. These must be the same as the sample names in the OTU file 
+row.names(variables)=variables$`Sample name` 
+#deletes the column with sample names 
+variables %>% subset.data.frame(drop=TRUE, select = -1) 
+variables$ChDay = paste0("Day ", variables$Day, sep = "")
+#converts the data.frame to phyloseq class 
+sam_variables = phyloseq::sample_data(variables) 
+sample_data(exp_nor) = sam_variables
+
+
+exp_2.50 = subset_samples(exp_nor, Day > 1) 
+sample_data(exp_2.50)$Regime = factor(sample_data(exp_2.50)$Regime, levels = c("UDH", "UDL", "DUH", "DUL"))
+#save a phyloseq object without the first day
+#saveRDS(exp_2.50, file = "exp_2.50.rds")
+```
+
+```{r}
+#calculate effective number of types of order 0, 1 and 2
+OTU_table = as.data.frame(exp_nor@otu_table)
+transposed_OTU_table = t(OTU_table)
+hillnumbers = vegan::renyi(transposed_OTU_table, scales = c(0,1,2), hill = TRUE) #calculates diversity of different orders for the dataset 
+colnames(hillnumbers) = c("Order0", "Order1", "Order2")
+#now we add the hillnumbers to the enviromental variables for easy plotting. 
+sample_data(exp_nor) <- cbind(sample_data(exp_nor), hillnumbers) #binds the 0D to the sample data matrix
+
+#lets save the sample data as a data.frame to insert into ggplot
+df_rarified = data.frame(exp_nor@sam_data)
+df_rarified$samplename = rownames(df_rarified)
+
+source("plot.settings.paper.R")
+df_rarified %>% mutate(Regime = factor(Regime, levels = c("UDH", "UDL", "DUH", "DUL", "Inoculum")),
+                       Disturbed = factor(Disturbed, levels = c("no", "yes", "none"))) %>%
+  ggplot2::ggplot(aes(x = Day, y = Order0)) +
+  stat_summary(fun="mean", geom="line", aes(group=interaction(Disturbed, Regime), linetype = Nutrient, 
+                                            color = Disturbed)) +
+  annotate("rect", xmin=0, xmax=2, ymin=40, ymax=600, alpha=0.5, fill="darkgrey") +
+  scale_x_continuous(expand = c(0.01, 0.01)) + 
+  scale_y_continuous(trans = "log10", expand = c(0,0)) + 
+  labs(x = "Day", y = expression(paste( ""^0,"D"))) +
+  geom_vline(xintercept = 28.5, col='black') +  
+  geom_point(aes(shape = Regime, fill = Disturbed), size = 2.3, color = "black") +
+  geom_point(aes(shape = Regime, fill = Disturbed, color = Disturbed), size = 2) +
+  my.theme + 
+  theme(legend.title  = element_text(size = 10)) + 
+  scale_shape_manual(values = c(16,1,17,2,23)) + 
+  scale_color_manual("Periodically disturbed", values = c(dist.col, cb_palette[3])) +
+  scale_fill_manual("Periodically disturbed", values = c(dist.col, cb_palette[3])) + 
+  scale_linetype_manual("Carrying capacity", 
+                        values = c("solid", "dashed", "solid", "dashed",  "blank")) + 
+  guides(shape = guide_legend(keywidth = 1, keyheight = 1), 
+         color = guide_legend(keywidth = 1,keyheight = 1,  override.aes = list(linetype = NULL)), 
+         linetype = guide_legend(keywidth = 1, keyheight = 1))
+```

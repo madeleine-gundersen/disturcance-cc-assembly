@@ -1,0 +1,127 @@
+---
+title: "Creating a phyloseq object and normalisation"
+---
+Load the required packages for making a phyloseq object 
+```{r}
+library(phyloseq)
+library(readxl)
+library(magrittr)
+```
+
+# Create phyloseq object
+**OTU-table**
+The otu.tab file was converted to excel and modified there before import to R. Samples below 10 000 reads were upscaled to be included in further analysis. The file imported here only contains the reactor water samples and the inoculum. A total of 202 sampels.
+```{r}
+otumatrix = read_xlsx("OTU_table_scaled.xlsx", sheet = 1) %>% as.data.frame
+# changes the rownames to OTU ids
+row.names(otumatrix) = otumatrix[, 1]
+# deletes the first column
+otumatrix = subset(otumatrix, select = c(colnames(otumatrix)[2:length(otumatrix)]))
+# makes a phyloseq object with an OTU table
+OTU = otu_table(otumatrix, taxa_are_rows = TRUE)
+```
+**Taxonomy**
+Requires that the file import_sintax-file.R is in the working directory. 
+import_taxa-file.R copied from the package ("jfq3/RDPutils") by John Quensen <quensenj@msu.edu>  https://rdrr.io/github/jfq3/RDPutils/src/R/import_sintax_file.R
+
+```{r}
+source('import_sintax-file.R')
+taxmat = import_sintax_file("madeleine--1.0--2--3.sintax", confidence = 0.8)
+TAX = tax_table(taxmat)
+# combine OTU table and taxonomy and name it as "your experiment", example reactors
+reactor = phyloseq(OTU, TAX)
+```
+
+**Variables**
+Samples as rows and variables as colums. 
+```{r}
+#converts your excel document to a data frame 
+variables = read_xlsx("Metadata.xlsx", sheet = 1) %>% as.data.frame
+#changes the row names to the sample names. These must be the same as the sample names in the OTU file
+row.names(variables)=variables$`Sample name`
+#deletes the column with sample names
+variables %<>% subset.data.frame(drop=TRUE, select = -1)
+
+#converts the data.frame to phyloseq class
+sam_variables = sample_data(variables)
+
+#Now integrate the variables into the physeq object experiment
+reactor = merge_phyloseq(reactor, sam_variables)
+```
+
+**Phylogenic tree**
+```{r}
+tree = ape::read.tree(file = "phylogenictree_rk_selcetion.nwk")
+tree = phy_tree(tree)
+reactor = merge_phyloseq(reactor, tree)
+```
+**Saving**
+```{r}
+# makes an RDS file 
+saveRDS(reactor, "sel_cc_exp.rds")
+```
+
+# Normalisation of data
+
+```{r}
+library(vegan)
+library("ggplot2")
+library("metagMisc")
+library(readxl)
+library(magrittr)
+
+exp = readRDS("sel_cc_exp.rds")
+#changed continious to undistrubed. Change the sample ID
+sample_names(exp) = stringr::str_replace(sample_names(exp), "C", "U") 
+```
+
+**Inspection of sequensing depth**
+
+Rarefraction for reactor_experiment. The following code generates a curve plotting each sample as a function of sequensing depth to number of OTUs detected. Samples are qualified when increasing sequensing depth dont increase the number of OTUs detected. When the depth is insufficient, the slope is not ~0. 
+
+```{r}
+max_depth_to_test <- max(sample_sums(exp))
+max_otus_to_display <- max(estimate_richness(exp, measures = "Observed"))
+
+#must run in console window
+# pdf("figures/sup1_rarefraction.pdf")
+# vegan::rarecurve(t(otu_table(exp)), step = 500, xlim = c(0,60000), ylim = c(0,max_otus_to_display), label = TRUE, cex=0.5, xlab = "Depth", ylab = "Observed OTUs") 
+# abline(v = 10000, col = "red")
+# # Close the pdf file
+# dev.off() 
+# at 10 000 reads all samples were included and almost all curves had flattened.
+```
+
+**Rarifying**
+Based on the curve above and analysis of reads deleted, sample size was set to 10 000 reads. 
+```{r rarefraction}
+# we created 1000 datasets that were rarified by random drawing of samples
+exp_nor = metagMisc::phyloseq_mult_raref(x = exp, SampSize = 10000,  iter = 1000,  replace = FALSE, trimOTUs = FALSE)
+# all the rarefraction were merged into one phyloseq object
+i = 1
+for (j in 1:(length(exp_nor)/2)) {
+  merge = phyloseq::merge_phyloseq(exp_nor[[i]],exp_nor[[i+1]])
+  if(i == 1) {
+   all = merge
+} else {
+   all = phyloseq::merge_phyloseq(merge, all)
+}
+  i = i + 2
+}
+# each OTU was divided by 1000
+all@otu_table@.Data[,] = all@otu_table@.Data[,]/length(exp_nor)
+all@otu_table@.Data[,] = ceiling(all@otu_table@.Data[,])
+# a final rarefraction was performed so each sample contained 10 000 reads
+all = phyloseq::rarefy_even_depth(all, sample.size = 10000, rngseed = 711,
+                              replace = FALSE, trimOTUs = TRUE, verbose = TRUE)
+sample_sums(all) # should be 10 000 per sample
+saveRDS(all, "sel_cc_exp_nor.rds")
+```
+
+
+**Saving rarified phyloseq object**
+```{r}
+saveRDS(all, "sel_cc_exp_nor.rds")
+```
+
+

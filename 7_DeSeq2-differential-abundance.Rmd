@@ -1,0 +1,186 @@
+---
+title: "7_differential abundance with DeSeq2"
+output: html_notebook
+---
+
+```{r, echo=FALSE}
+library(microbiomeSeq)
+library(phyloseq)
+library(dplyr)
+library(ggplot2)
+library(DESeq2)
+source(file = "plot.settings.paper.R")
+```
+
+DeSeq2 uses raw data as input. 
+```{r}
+exp = readRDS(file = "sel_cc_exp.rds")
+
+# deseq needs raw file
+endweeks = phyloseq::subset_samples(exp, Week %in% c(3,4,6,7))
+endweeks = phyloseq::subset_samples(endweeks, Day != 1 )  
+endweeks = phyloseq::subset_samples(endweeks, Day != 0 )  
+
+exp = endweeks
+library(genefilter)
+f1 = genefilter::filterfun(kOverA(A=0, k=1)) 
+#OTUs have to have over 100 reads in 1 sample 
+exp_pruned = phyloseq::filter_taxa(exp, f1, prune = TRUE)
+
+physeq = exp_pruned
+tax_table(physeq) = cbind(tax_table(physeq), rownames(tax_table(physeq)))
+colnames(tax_table(physeq)) = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "OTUID")
+```
+
+Calculate the DeSeq2 object
+```{r}
+# convert OTU table to matrix
+otu_tab = (otu_table(physeq))
+#DESeq2 need taxa(genes=rows) by samples(=columns)
+countData<-(as(otu_tab, "matrix"))
+head(countData)
+#sample metadata
+meta = data.frame(sample_data(physeq))
+meta$Sel_sampling = as.factor(meta$Sel_sampling)
+group = meta$Sel_sampling
+# build the deseq object 
+metaData = data.frame(row.names=colnames(countData),group=group)
+dds = DESeqDataSetFromMatrix(countData = countData, colData = metaData, design = ~group)
+dds <- dds[rowSums(counts(dds)) > 0,] #double check all 0 count taxa are gone
+#normalise data with median ration method. 
+dds <- estimateSizeFactors(dds)
+sizeFactors(dds)
+#estimate the dispersion 
+dds<- estimateDispersions(dds)
+deseq_restult = DESeq2::DESeq(object = dds, test = c("Wald") ) 
+mcols(mcols(deseq_restult))
+mcols(deseq_restult)
+#saveRDS(object = deseq_restult, file = "deseq_results.RDS")
+#saveRDS(object = vst, file = "deseq_vst.RDS")
+deseq_restult = readRDS(file = "deseq_results.RDS")
+#as.data.frame(res) %>% ggplot2::ggplot(aes(x = log2FoldChange, y = pvalue) ) + geom_point()
+res =  results(deseq_restult, contrast = c("group", "D", "C") )
+```
+
+
+```{r}
+# how many OTUs were sig differentailly expressed (using FDR ajusted p-value)
+table(res[,"padj"] < 0.1) # the FDR corrected p-value have 117 below 0.1
+table(res[,"padj"] < 0.01) # 91 below 0.01
+table(res[,"padj"] < 0.05) # 107 below 0.05
+```
+
+Investigate the fold changes distribution along with the p-values through a volcanoplot. 
+```{r}
+df = as.data.frame(res) 
+df$taxa = rownames(df) 
+df1 = na.omit(df)
+
+df1 %>% ggplot2::ggplot(aes(x= log2FoldChange, y = -log10(padj))) + 
+  geom_point()
+```
+
+Create a dataframe with the significant OTUs
+```{r}
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(physeq)[rownames(sigtab), ], "matrix"))
+
+x = tapply(sigtab$log2FoldChange, sigtab$Phylum, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Phylum = factor(as.character(sigtab$Phylum), levels=names(x))
+# Genus order
+x = tapply(sigtab$log2FoldChange, sigtab$Genus, function(x) max(x))
+x = sort(x, TRUE)
+
+sigtab$Genus = factor(as.character(sigtab$Genus), levels=names(x))
+
+sigtab2 = sigtab %>% mutate(classified = substr(Order, 1,1)) %>% 
+  mutate(Ordername =case_when(classified == "o" ~ substring(Order, 3), 
+                              classified != "o" ~ "x_unclassified at order level")) %>% 
+  mutate(classified2 = substr(Genus, 1,1)) %>% 
+  mutate(taxonname = case_when(classified2 == "g" ~ substring(Genus,1), 
+                              classified2 != "g" ~  substring(Genus, 6) )) %>%
+  mutate(lowest_class = substr(taxonname, 1,1)) %>%
+  mutate(group = 
+           case_when(classified2 == "g" ~  paste0(substring(taxonname,3)), 
+                     classified2 != "g" ~  paste0("uncl. (", substring(taxonname,1,1), " ", substring(taxonname,3), ")"))) %>%
+  
+  mutate(classified_c = substr(Class, 1,1)) %>% 
+  mutate(classname =case_when(classified_c == "c" ~ substring(Class, 3), 
+                              classified_c != "c" ~ "x_unclassified at class level"))
+
+
+#x = tapply(sigtab2$log2FoldChange, sigtab2$taxonname, function(x) max(x))
+#x = sort(x, TRUE)
+x = tapply(sigtab2$log2FoldChange, sigtab2$group, function(x) max(x))
+x = sort(x, TRUE)
+sigtab2$group = factor(as.character(sigtab2$group), levels=names(x))
+```
+
+
+```{r}
+col[11] = "grey"
+
+sigtab2 %>% 
+  ggplot(aes(y=group, x=log2FoldChange, fill=classname)) + 
+  
+  geom_rect(ymin = as.numeric(sigtab$Genus[[1]]) - 20,
+                                        ymax = as.numeric(sigtab$Genus[[length(sigtab$OTUID)]]) + 20,
+                                        xmin = 0, xmax = 12,
+             color = "transparent", fill = alpha("#0072b2",0.3 ))  +
+
+
+    geom_rect(ymin = as.numeric(sigtab$Genus[[1]]) - 20,
+                                        ymax = as.numeric(sigtab$Genus[[length(sigtab$OTUID)]]) + 20,
+                                        xmin = 0, xmax = -9,
+             color = "transparent", fill = "#e69f00", alpha = 0.3) +
+
+  
+  geom_point(size= 3 , color = "black", shape = 21 ) + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) + 
+  geom_vline(xintercept = 0) + 
+  scale_fill_manual("Class", values = (col)[c(2:6,8,9,11)]) + 
+  my.theme + 
+  ylab("")
+```
+
+
+```{r}
+sigtab %>% group_by(Genus) %>% summarise(n = n()) %>% arrange(desc(n) ) 
+sigtab %>% group_by(Genus) %>% summarise(n = n()) %>% group_by(n) %>% summarise(number = n())
+
+# how many OTUs are dif expressed to each side?
+table(sigtab [,"log2FoldChange"] > 0) 
+table(res [,"log2FoldChange"] > 0) 
+```
+
+```{r}
+sigtab2 %>% group_by(classified2) %>% summarise(n=n())
+library(ggplot2)
+sigtab2 %>% mutate(higher_abundance = case_when(log2FoldChange>0~"disturbed", 
+                                                          log2FoldChange<0~"undisturbed")) %>%
+  group_by(Class, higher_abundance) %>% summarise(n=n()) %>%
+  
+  ggplot2::ggplot(aes(y=Class, x = n, fill = higher_abundance )) + 
+  geom_bar(stat = "identity", position = position_dodge()) 
+
+sigtab2 %>% mutate(higher_abundance = case_when(log2FoldChange>0~"disturbed", 
+                                                          log2FoldChange<0~"undisturbed")) %>%
+  group_by(Class, higher_abundance) %>% summarise(n=n())
+
+# gammaproteobacteria, 50 higher abundance during dirsturbance, 3 during undisss
+50*100/53
+
+sigtab2 %>% mutate(higher_abundance = case_when(log2FoldChange>0~"disturbed", 
+                                                          log2FoldChange<0~"undisturbed")) %>% arrange(desc(log2FoldChange))
+
+
+sigtab2 %>% mutate(higher_abundance = case_when(log2FoldChange>0~"disturbed", 
+                                                          log2FoldChange<0~"undisturbed")) %>% 
+  group_by(Genus, higher_abundance)   %>% summarise(n=n())  %>% filter(n>1) %>%
+  
+  ggplot2::ggplot(aes(y=Genus, x = n, fill = higher_abundance )) + 
+  geom_bar(stat = "identity", position = position_dodge()) 
+```
+

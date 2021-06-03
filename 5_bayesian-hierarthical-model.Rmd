@@ -1,0 +1,936 @@
+---
+title: "5_Bayesian-hierartichael-model"
+---
+#Distributions
+```{r }
+library(dplyr)
+replicates_diff = readRDS(file = "similarityreplicates_bc_sor.RDS")
+x = replicates_diff %>% filter(distance == "Bray-Curtis", period == "Period_1") %>% pull(value)
+library(fitdistrplus)
+descdist(x, discrete = FALSE, boot = 500)
+```
+
+Based on the skewness and kurtosis plot it appears that the data fits best with the beta distrubution. However, I will check otheer common ones. We fitted a normal-, lognormal-, gamma-, beta- and logistic distribution to the data through maximum likelihood estimation for both similarity indexes. The observed data were compared with the distributions in a density-, quantile-, cumulative density- and probability plot. Based on these plots, the gaussian, lognormal, gamma and beta distribution appeared to fit the data well. Because the variation was heteroscedastic, we chose to continue with the gaussian and lognormal distribution as these allowed us to constrain this variation to the metadata.
+
+```{r, fig.height=7, warning = FALSE}
+normal_dist <- fitdist(x, "norm")
+lognormal = fitdist(x, "lnorm")
+gamma = fitdist(x, "gamma")
+#exp = fitdist(x, "exp") does not fit the data 
+beta = fitdist(x, "beta")
+#unif = fitdist(x, "unif") #does not fit the data
+logis = fitdist(x, "logis")
+
+par(mfrow = c(2, 2))
+plot.legend <- c("Gaussian", "lognormal", "gamma", "beta", "logis")
+denscomp(list(normal_dist, lognormal, gamma,beta,logis), legendtext = plot.legend)
+qqcomp(list(normal_dist, lognormal, gamma,beta,logis), legendtext = plot.legend)
+cdfcomp(list(normal_dist, lognormal, gamma,beta,logis), legendtext = plot.legend)
+ppcomp(list(normal_dist, lognormal, gamma,beta,logis), legendtext = plot.legend)
+
+```
+
+# brms models 
+For each similarity index (Bray-Curtis and Sørensen) we estimated a numerous model formulas to the replicate similarity divergence data. 
+## BC period 1
+
+```{r bc p1}
+library(dplyr)
+library(brms)
+
+dataset =  readRDS(file = "similarityreplicates_bc_sor.RDS")
+# Period 1 bray Curtis
+options(mc.cores = parallel::detectCores())
+rstan::rstan_options(auto_write = TRUE)
+Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+
+d = dataset %>%  filter(day < 29, distance == "Bray-Curtis") %>% mutate(time = day-mean(day))
+
+my_formulas = list(
+f.m1 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~1),
+f.m2 = bf(value  ~ time * selection   + (1 + time | comparison), sigma ~1),
+f.m3 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~1),
+f.m4 = bf(value  ~ time * selection   + (1 | comparison), sigma ~1),
+f.m5 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~ time),
+f.m6 = bf(value  ~ time * selection   + (1 + time | comparison), sigma ~time),
+f.m7 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time),
+f.m8 = bf(value  ~ time * selection   + (1 | comparison), sigma ~time),
+f.m9 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~ time*selection),
+f.m10 = bf(value  ~ time * selection   + (1 + time | comparison), sigma ~time*selection),
+f.m11 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection),
+f.m12 = bf(value  ~ time * selection   + (1 | comparison), sigma ~time*selection),
+
+f.m13 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~1),
+f.m14 = bf(value  ~ day * selection   + (1 + day | comparison), sigma ~1),
+f.m15 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~1),
+f.m16= bf(value  ~ day * selection   + (1 | comparison), sigma ~1),
+f.m17 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~ day),
+f.m18 = bf(value  ~ day * selection   + (1 + day | comparison), sigma ~day),
+f.m19 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day),
+f.m20= bf(value  ~ day * selection   + (1 | comparison), sigma ~day),
+f.m21 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~ day*selection),
+f.m22 = bf(value  ~ day * selection   + (1 + day | comparison), sigma ~day*selection),
+f.m23 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection),
+f.m24 = bf(value  ~ day * selection   + (1 | comparison), sigma ~day*selection)
+)
+
+models_log = vector(mode = "list", length = length(my_formulas))
+names(models_log) = paste0(substring(names(my_formulas), 3), "_log")
+loos_log = vector(mode = "list", length = length(my_formulas))
+names(loos_log) = paste0(substring(names(my_formulas), 3), "_log")
+
+models_nor = vector(mode = "list", length = length(my_formulas))
+names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+loos_nor = vector(mode = "list", length = length(my_formulas))
+names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+
+for (i in 1:length(my_formulas)) {
+  prior_lognormal = get_prior(my_formulas[[i]], data = d, family= lognormal())
+  model_log = brms::brm(my_formulas[[i]], family= lognormal(), data=d, iter = 4000, warmup = 2000,
+                  prior = prior_lognormal, control = list(adapt_delta = 0.99))
+
+  loo_model_log = loo(model_log, reloo = TRUE)
+
+  prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+  model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+                  prior = prior_normal, control = list(adapt_delta = 0.99))
+  loo_model_nor = loo(model_nor, reloo = TRUE)
+
+  models_log[[i]] = model_log
+  loos_log[[i]] = loo_model_log
+  models_nor[[i]] = model_nor
+  loos_nor[[i]] = loo_model_nor
+}
+
+models = list(models_log,models_nor)
+loos = list(loos_log,loos_nor)
+saveRDS(models, "brms_models_replicates/models_period1_braycurtis_replicatedivergence_12052020.RDS")
+saveRDS(loos, "brms_models_replicates/loos_period1_braycurtis_replicatedivergence_12052020.RDS")
+```
+
+We used the leave-one-out cross validation (LOO) to determine the fit of the posterior distribution of each model. LOO returns the expected log point wise predictive density (elpd_loo). A higher elpd_loo value indicates that the model better predicts the data. We then used loo_compare() to compare all the models estimated within a similarity index and period. Of interest in the output of loo_compare is elpd_diff, se_diff and p_loo. The model with the highest elpd_loo is given the value 0, and the other models elpd_loo is computed relative to the best model. The effective number of parameters (p_loo) describes how much more difficult it is to predict future data than the observed data. p_loo can be interpreted as the effective number of parameters. In well behaving cases p_loo < p, where p is the total number of parameters in the model. p_loo > p indicates that the model has very weak predictive capability and may indicate a severe model misspecification. For more information see https://mc-stan.org/loo/reference/loo-glossary.html.  If elpd difference (elpd_diff in loo package) is less than 4, the difference is small. If elpd difference (elpd_diff in loo package) is larger than 4, then compare that difference to standard error of elpd_diff (provided e.g. by loo package). 
+
+```{r}
+loos_period1_bc = readRDS("brms_models_replicates/loos_period1_braycurtis_replicatedivergence_12052020.RDS")
+loos_period1_log = loos_period1_bc[[1]]
+loos_period1_nor = loos_period1_bc[[2]]
+
+loocomparisons_loo = loo::loo_compare(c(loos_period1_log, loos_period1_nor))
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+```
+
+```{r}
+loos_period1_bc = readRDS("brms_models_replicates/loos_period1_braycurtis_replicatedivergence_12052020.RDS")
+loos_period1_nor = loos_period1_bc[[2]][c(1,5,9:13,17,21:24)]
+
+loocomparisons_loo = loo::loo_compare(loos_period1_nor)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+```
+
+# bc p2
+
+```{r bc p2}
+dataset =  readRDS(file = "similarityreplicates_bc_sor.RDS")
+# Period 2 bray Curtis
+options(mc.cores = parallel::detectCores())
+rstan::rstan_options(auto_write = TRUE)
+Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+
+d = dataset %>%  filter(day > 28, distance == "Bray-Curtis") %>% mutate(time = day-mean(day))
+
+my_formulas = list(
+f.m1 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~1),
+f.m5 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~ time),
+f.m9 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~ time*selection),
+f.m10 = bf(value  ~ time * selection   + (1 + time | comparison), sigma ~time*selection),
+f.m11 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection),
+f.m12 = bf(value  ~ time * selection   + (1 | comparison), sigma ~time*selection),
+
+f.m13 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~1),
+f.m17 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~ day),
+f.m21 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~ day*selection),
+f.m22 = bf(value  ~ day * selection   + (1 + day | comparison), sigma ~day*selection),
+f.m23 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection),
+f.m24 = bf(value  ~ day * selection   + (1 | comparison), sigma ~day*selection)
+)
+
+models_nor = vector(mode = "list", length = length(my_formulas))
+names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+loos_nor = vector(mode = "list", length = length(my_formulas))
+names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+
+for (i in 1:length(my_formulas)) {
+  prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+  model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+                  prior = prior_normal, control = list(adapt_delta = 0.99))
+  loo_model_nor = loo(model_nor, reloo = TRUE)
+
+  models_nor[[i]] = model_nor
+  loos_nor[[i]] = loo_model_nor
+}
+
+models = models_nor
+loos = loos_nor
+saveRDS(models, "brms_models_replicates/models_period2_braycurtis_replicatedivergence_13052020.RDS")
+saveRDS(loos, "brms_models_replicates/loos_period2_braycurtis_replicatedivergence_13052020.RDS")
+```
+
+```{r}
+loos_period2_bc = readRDS("brms_models_replicates/loos_period2_braycurtis_replicatedivergence_13052020.RDS")
+loos_period2_nor = loos_period2_bc
+
+loocomparisons_loo = loo::loo_compare(loos_period2_nor)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+```
+
+
+# sor p1 
+
+```{r sor p1}
+dataset =  readRDS(file = "similarityreplicates_bc_sor.RDS")
+# Period 1 sørensen
+options(mc.cores = parallel::detectCores())
+rstan::rstan_options(auto_write = TRUE)
+Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+
+d = dataset %>%  filter(day < 29, distance == "Sørensen") %>% mutate(time = day-mean(day))
+
+my_formulas = list(
+f.m1 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~1),
+f.m5 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~ time),
+f.m9 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~ time*selection),
+f.m10 = bf(value  ~ time * selection   + (1 + time | comparison), sigma ~time*selection),
+f.m11 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection),
+f.m12 = bf(value  ~ time * selection   + (1 | comparison), sigma ~time*selection),
+
+f.m13 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~1),
+f.m17 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~ day),
+f.m21 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~ day*selection),
+f.m22 = bf(value  ~ day * selection   + (1 + day | comparison), sigma ~day*selection),
+f.m23 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection),
+f.m24 = bf(value  ~ day * selection   + (1 | comparison), sigma ~day*selection)
+)
+
+models_nor = vector(mode = "list", length = length(my_formulas))
+names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+loos_nor = vector(mode = "list", length = length(my_formulas))
+names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+
+for (i in 1:length(my_formulas)) {
+
+  prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+  model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+                  prior = prior_normal, control = list(adapt_delta = 0.99))
+  loo_model_nor = loo(model_nor, reloo = TRUE)
+
+  models_nor[[i]] = model_nor
+  loos_nor[[i]] = loo_model_nor
+}
+
+models = models_nor
+loos = loos_nor
+saveRDS(models, "brms_models_replicates/models_period1_sorensen_replicatedivergence_13052020.RDS")
+saveRDS(loos, "brms_models_replicates/loos_period1_sorensen_replicatedivergence_13052020.RDS")
+```
+
+```{r loos sor p1}
+loos_period1_sor = readRDS("brms_models_replicates/loos_period1_sorensen_replicatedivergence_13052020.RDS")
+loos_period1_nor = loos_period1_sor
+
+loocomparisons_loo = loo::loo_compare(loos_period1_nor)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+```
+
+# sor p2 
+
+```{r sor p2}
+dataset = readRDS("brms_models_replicates/similarityreplicates_bc_sor.RDS")
+# Period 2  sørensen
+options(mc.cores = parallel::detectCores())
+rstan::rstan_options(auto_write = TRUE)
+Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+
+d = dataset %>%  filter(day > 28, distance == "Sørensen") %>% mutate(time = day-mean(day))
+
+my_formulas = list(
+f.m1 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~1),
+f.m5 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~ time),
+f.m9 = bf(value  ~ time * selection * nutrient  + (1 + time | comparison), sigma ~ time*selection),
+f.m10 = bf(value  ~ time * selection   + (1 + time | comparison), sigma ~time*selection),
+f.m11 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection),
+f.m12 = bf(value  ~ time * selection   + (1 | comparison), sigma ~time*selection),
+
+f.m13 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~1),
+f.m17 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~ day),
+f.m21 = bf(value  ~ day * selection * nutrient  + (1 + day | comparison), sigma ~ day*selection),
+f.m22 = bf(value  ~ day * selection   + (1 + day | comparison), sigma ~day*selection),
+f.m23 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection),
+f.m24 = bf(value  ~ day * selection   + (1 | comparison), sigma ~day*selection)
+)
+
+models_nor = vector(mode = "list", length = length(my_formulas))
+names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+loos_nor = vector(mode = "list", length = length(my_formulas))
+names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+
+for (i in 1:length(my_formulas)) {
+  prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+  model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+                  prior = prior_normal, control = list(adapt_delta = 0.99))
+  loo_model_nor = loo(model_nor, reloo = TRUE)
+  models_nor[[i]] = model_nor
+  loos_nor[[i]] = loo_model_nor
+}
+
+models =models_nor
+loos = loos_nor
+saveRDS(models, "brms_models_replicates/models_period2_sorensen_replicatedivergence_13052020.RDS")
+saveRDS(loos, "brms_models_replicates/loos_period2_sorensen_replicatedivergence_13052020.RDS")
+```
+
+```{r loos sor p2}
+loos_period2_sor = readRDS("brms_models_replicates/loos_period2_sorensen_replicatedivergence_13052020.RDS")
+loos_period2_nor = loos_period2_sor
+
+loocomparisons_loo = loo::loo_compare(loos_period2_nor)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+```
+
+
+# Comparison of elpd values
+The elods were saved for all the models estimated in a excel document used for plotting. 
+
+```{r}
+library(readxl)
+elpd_all = readxl::read_excel("data/brms_models_replicates/loos_replicates.xlsx")
+library(reshape2)
+elpd_all = reshape2::melt(elpd_all, c("m", "model"))
+library(ggplot2)
+library(dplyr)
+source(file = "plot.settings.paper.R")
+elpd_all %>% dplyr::mutate(value = round(value, 1), m = factor(m, levels = c(1,5,9,10,11,12,13,17,23,24)))  %>% 
+  
+  
+  ggplot(aes(x = model, fill = variable, y = value)) + 
+  geom_bar(stat = "identity", position = position_dodge(), color = "black") + 
+  geom_text(aes(label=value), position=position_dodge(width=0.9), hjust = 1.1, size = 3, angle = 90) + 
+  my.theme + 
+  scale_fill_grey("Dataset") + 
+  facet_wrap(m~., scales = "free_x", nrow = 1) + 
+  coord_cartesian(expand = FALSE, ylim = c(-30,0)) + 
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) + 
+  xlab("Model") + 
+  ylab("Elpd_diff") + 
+  scale_x_discrete(position = "top") 
+```
+
+# model 23 variations 
+##bcp1
+```{r bc p1 23}
+# dataset = readRDS("brms_models_replicates/similarityreplicates_bc_sor.RDS")
+# # Period 1 bray Curtis
+# options(mc.cores = parallel::detectCores())
+# rstan::rstan_options(auto_write = TRUE)
+# Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+# 
+# d = dataset %>%  filter(day < 29, distance == "Bray-Curtis") %>% mutate(time = day-mean(day))
+# 
+# my_formulas = list(
+# f.m23.1 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.2 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.3 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.4 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.5 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.6 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.7 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.8 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.9 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.10 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.11 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.12 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.13 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.14 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.15 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.16 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection), 
+# f.m23.17 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day+selection), 
+# f.m23.18 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.19 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.20 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day+selection+nutrient)
+# 
+# )
+# 
+# models_nor = vector(mode = "list", length = length(my_formulas))
+# names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# loos_nor = vector(mode = "list", length = length(my_formulas))
+# names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# 
+# for (i in 1:length(my_formulas)) {
+#   prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+#   model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+#                   prior = prior_normal, control = list(adapt_delta = 0.99))
+#   loo_model_nor = loo(model_nor, reloo = TRUE)
+#   models_nor[[i]] = model_nor
+#   loos_nor[[i]] = loo_model_nor
+# }
+# 
+# models = list(models_nor)
+# loos = list(loos_nor)
+# saveRDS(models, "brms_models_replicates/models_period1_braycurtis_replicatedivergence_m23_14052020.RDS")
+# saveRDS(loos, "brms_models_replicates/loos_period1_braycurtis_replicatedivergence_m23_14052020.RDS")
+```
+
+```{r loos m23 b p1 }
+loos = readRDS("brms_models_replicates/loos_period1_braycurtis_replicatedivergence_m23_14052020.RDS")
+loos = loos[[1]]
+loocomparisons_loo = loo_compare(loos)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+
+loocomp = loocomparisons[,c(1,9)]
+```
+
+
+##bc p2
+```{r bc p2 23}
+# dataset = readRDS("brms_models_replicates/similarityreplicates_bc_sor.RDS")
+# # Period 1 bray Curtis
+# options(mc.cores = parallel::detectCores())
+# rstan::rstan_options(auto_write = TRUE)
+# Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+# 
+# d = dataset %>%  filter(day > 28, distance == "Bray-Curtis") %>% mutate(time = day-mean(day))
+# 
+# my_formulas = list(
+# f.m23.1 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.2 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.3 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.4 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.5 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.6 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.7 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.8 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.9 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.10 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.11 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.12 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.13 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.14 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.15 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.16 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection), 
+# f.m23.17 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day+selection), 
+# f.m23.18 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.19 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.20 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day+selection+nutrient)
+# 
+# )
+# 
+# models_nor = vector(mode = "list", length = length(my_formulas))
+# names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# loos_nor = vector(mode = "list", length = length(my_formulas))
+# names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# 
+# for (i in 1:length(my_formulas)) {
+#   prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+#   model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+#                   prior = prior_normal, control = list(adapt_delta = 0.99))
+#   loo_model_nor = loo(model_nor, reloo = TRUE)
+#   models_nor[[i]] = model_nor
+#   loos_nor[[i]] = loo_model_nor
+# }
+# 
+# models = list(models_nor)
+# loos = list(loos_nor)
+# saveRDS(models, "brms_models_replicates/models_period2_braycurtis_replicatedivergence_m23_14052020.RDS")
+# saveRDS(loos, "brms_models_replicates/loos_period2_braycurtis_replicatedivergence_m23_14052020.RDS")
+```
+
+
+```{r loos m23 b p2 }
+loos = readRDS("brms_models_replicates/loos_period2_braycurtis_replicatedivergence_m23_14052020.RDS")
+loos = loos[[1]]
+loocomparisons_loo = loo_compare(loos)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+
+loocomp = loocomparisons[,c(1,9)]
+```
+
+## sor p1
+```{r sor p1 23}
+# dataset = readRDS("brms_models_replicates//similarityreplicates_bc_sor.RDS")
+# # Period 1 bray Curtis
+# options(mc.cores = parallel::detectCores())
+# rstan::rstan_options(auto_write = TRUE)
+# Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+# 
+# d = dataset %>%  filter(day < 29, distance == "Sørensen") %>% mutate(time = day-mean(day))
+# 
+# my_formulas = list(
+# f.m23.1 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.2 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.3 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.4 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.5 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.6 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.7 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.8 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.9 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.10 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.11 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.12 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.13 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.14 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.15 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.16 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection), 
+# f.m23.17 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day+selection), 
+# f.m23.18 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.19 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.20 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day+selection+nutrient)
+# 
+# )
+# 
+# models_nor = vector(mode = "list", length = length(my_formulas))
+# names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# loos_nor = vector(mode = "list", length = length(my_formulas))
+# names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# 
+# for (i in 1:length(my_formulas)) {
+#   prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+#   model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+#                   prior = prior_normal, control = list(adapt_delta = 0.99))
+#   loo_model_nor = loo(model_nor, reloo = TRUE)
+#   models_nor[[i]] = model_nor
+#   loos_nor[[i]] = loo_model_nor
+# }
+# 
+# models = list(models_nor)
+# loos = list(loos_nor)
+# saveRDS(models, "brms_models_replicates/models_period1_sorensen_replicatedivergence_m23_14052020.RDS")
+# saveRDS(loos, "brms_models_replicates/loos_period1_sorensen_replicatedivergence_m23_14052020.RDS")
+```
+
+```{r loos m23 s p1 }
+loos = readRDS("brms_models_replicates/loos_period1_sorensen_replicatedivergence_m23_14052020.RDS")
+loos = loos[[1]]
+loocomparisons_loo = loo_compare(loos)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+
+loocomp = loocomparisons[,c(1,9)]
+```
+
+## sor p2
+```{r sor p2 23}
+# dataset = readRDS("brms_models_replicates/similarityreplicates_bc_sor.RDS")
+# # Period 1 bray Curtis
+# options(mc.cores = parallel::detectCores())
+# rstan::rstan_options(auto_write = TRUE)
+# Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+# 
+# d = dataset %>%  filter(day > 28, distance == "Sørensen") %>% mutate(time = day-mean(day))
+# 
+# my_formulas = list(
+# f.m23.1 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.2 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.3 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.4 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.5 = bf(value  ~ day * selection * nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.6 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.7 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.8 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.9 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.10 = bf(value  ~ day * selection + nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.11 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection), 
+# f.m23.12 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day+selection), 
+# f.m23.13 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.14 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.15 = bf(value  ~ day + selection + nutrient  + (1 | comparison), sigma ~day+selection+nutrient), 
+# 
+# f.m23.16 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection), 
+# f.m23.17 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day+selection), 
+# f.m23.18 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection*nutrient), 
+# f.m23.19 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day*selection+nutrient), 
+# f.m23.20 = bf(value  ~ day + selection  + (1 | comparison), sigma ~day+selection+nutrient)
+# 
+# )
+# 
+# models_nor = vector(mode = "list", length = length(my_formulas))
+# names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# loos_nor = vector(mode = "list", length = length(my_formulas))
+# names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# 
+# for (i in 1:length(my_formulas)) {
+#   prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+#   model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+#                   prior = prior_normal, control = list(adapt_delta = 0.99))
+#   loo_model_nor = loo(model_nor, reloo = TRUE)
+#   models_nor[[i]] = model_nor
+#   loos_nor[[i]] = loo_model_nor
+# }
+# 
+# models = list(models_nor)
+# loos = list(loos_nor)
+# saveRDS(models, "brms_models_replicates/models_period2_sorensen_replicatedivergence_m23_14052020.RDS")
+# saveRDS(loos, "brms_models_replicates/loos_period2_sorensen_replicatedivergence_m23_14052020.RDS")
+```
+
+```{r loos m23 s p2 }
+loos = readRDS("brms_models_replicates/loos_period2_sorensen_replicatedivergence_m23_14052020.RDS")
+loos = loos[[1]]
+loocomparisons_loo = loo_compare(loos)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+
+loocomp = loocomparisons[,c(1,9)]
+```
+
+# model 11 variations 
+##bcp1
+```{r bc p1 11}
+# dataset = readRDS("brms_models_replicates/similarityreplicates_bc_sor.RDS")
+# # Period 1 bray Curtis
+# options(mc.cores = parallel::detectCores())
+# rstan::rstan_options(auto_write = TRUE)
+# Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+# 
+# d = dataset %>%  filter(day < 29, distance == "Bray-Curtis") %>% mutate(time = day-mean(day))
+# 
+# my_formulas = list(
+# f.m11.1 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.2 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.3 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.4 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.5 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.6 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.7 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.8 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.9 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.10 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.11 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.12 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.13 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.14 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.15 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.16 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection),
+# f.m11.17 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time+selection),
+# f.m11.18 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.19 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.20 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time+selection+nutrient)
+# 
+# )
+# 
+# models_nor = vector(mode = "list", length = length(my_formulas))
+# names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# loos_nor = vector(mode = "list", length = length(my_formulas))
+# names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# 
+# for (i in 1:length(my_formulas)) {
+#   prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+#   model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+#                   prior = prior_normal, control = list(adapt_delta = 0.99))
+#   loo_model_nor = loo(model_nor, reloo = TRUE)
+#   models_nor[[i]] = model_nor
+#   loos_nor[[i]] = loo_model_nor
+# }
+# 
+# models = list(models_nor)
+# loos = list(loos_nor)
+# saveRDS(models, "brms_models_replicates/models_period1_braycurtis_replicatedivergence_m11_20052020.RDS")
+# saveRDS(loos, "brms_models_replicates/loos_period1_braycurtis_replicatedivergence_m11_20052020.RDS")
+```
+
+```{r loos m11 b p1 }
+loos = readRDS("brms_models_replicates/loos_period1_braycurtis_replicatedivergence_m11_20052020.RDS")
+loos = loos[[1]]
+loocomparisons_loo = loo_compare(loos)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+
+loocomp = loocomparisons[,c(1,9)]
+elpds = loocomp %>% mutate(m = str_remove(model, c("m11.")), dataset = "BC_P1") %>% mutate(m = str_remove(m, c("_nor")))
+
+```
+
+##bc p2
+```{r bc p2 11}
+# dataset = readRDS("brms_models_replicates/similarityreplicates_bc_sor.RDS")
+# # Period 1 bray Curtis
+# options(mc.cores = parallel::detectCores())
+# rstan::rstan_options(auto_write = TRUE)
+# Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+# 
+# d = dataset %>%  filter(day > 28, distance == "Bray-Curtis") %>% mutate(time = day-mean(day))
+# 
+# my_formulas = list(
+# f.m11.1 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.2 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.3 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.4 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.5 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.6 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.7 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.8 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.9 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.10 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.11 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.12 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.13 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.14 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.15 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.16 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection),
+# f.m11.17 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time+selection),
+# f.m11.18 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.19 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.20 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time+selection+nutrient)
+# 
+# )
+# 
+# 
+# models_nor = vector(mode = "list", length = length(my_formulas))
+# names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# loos_nor = vector(mode = "list", length = length(my_formulas))
+# names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# 
+# for (i in 1:length(my_formulas)) {
+#   prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+#   model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+#                   prior = prior_normal, control = list(adapt_delta = 0.99))
+#   loo_model_nor = loo(model_nor, reloo = TRUE)
+#   models_nor[[i]] = model_nor
+#   loos_nor[[i]] = loo_model_nor
+# }
+# 
+# models = list(models_nor)
+# loos = list(loos_nor)
+# saveRDS(models, "brms_models_replicates/models_period2_braycurtis_replicatedivergence_m11_20052020.RDS")
+# saveRDS(loos, "brms_models_replicates/loos_period2_braycurtis_replicatedivergence_m11_20052020.RDS")
+```
+
+
+```{r loos m11 b p2 }
+loos = readRDS("brms_models_replicates/loos_period2_braycurtis_replicatedivergence_m11_20052020.RDS")
+loos = loos[[1]]
+loocomparisons_loo = loo_compare(loos)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+
+loocomp = loocomparisons[,c(1,9)]
+
+bcp2 = loocomp %>% mutate(m = str_remove(model, c("m11.")), dataset = "BC_P2") %>% mutate(m = str_remove(m, c("_nor")))
+
+allelpd = bind_rows(elpds, bcp2)
+```
+
+## sor p1
+```{r sor p1 11}
+# dataset = readRDS("brms_models_replicates//similarityreplicates_bc_sor.RDS")
+# # Period 1 bray Curtis
+# options(mc.cores = parallel::detectCores())
+# rstan::rstan_options(auto_write = TRUE)
+# Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+# 
+# d = dataset %>%  filter(day < 29, distance == "Sørensen") %>% mutate(time = day-mean(day))
+# 
+# my_formulas = list(
+# f.m11.1 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.2 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.3 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.4 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.5 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.6 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.7 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.8 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.9 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.10 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.11 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.12 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.13 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.14 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.15 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.16 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection),
+# f.m11.17 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time+selection),
+# f.m11.18 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.19 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.20 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time+selection+nutrient)
+# 
+# )
+# 
+# 
+# models_nor = vector(mode = "list", length = length(my_formulas))
+# names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# loos_nor = vector(mode = "list", length = length(my_formulas))
+# names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# 
+# for (i in 1:length(my_formulas)) {
+#   prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+#   model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+#                   prior = prior_normal, control = list(adapt_delta = 0.99))
+#   loo_model_nor = loo(model_nor, reloo = TRUE)
+#   models_nor[[i]] = model_nor
+#   loos_nor[[i]] = loo_model_nor
+# }
+# 
+# models = list(models_nor)
+# loos = list(loos_nor)
+# saveRDS(models, "brms_models_replicates/models_period1_sorensen_replicatedivergence_m11_20052020.RDS")
+# saveRDS(loos, "brms_models_replicates/loos_period1_sorensen_replicatedivergence_m11_20052020.RDS")
+
+
+```
+
+```{r loos m11 s p1 }
+loos = readRDS("brms_models_replicates/loos_period1_sorensen_replicatedivergence_m11_20052020.RDS")
+loos = loos[[1]]
+loocomparisons_loo = loo_compare(loos)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+
+loocomp = loocomparisons[,c(1,9)]
+sorp1 = loocomp %>% mutate(m = str_remove(model, c("m11.")), dataset = "Sør_P1") %>% mutate(m = str_remove(m, c("_nor")))
+
+allelpd = bind_rows(allelpd , sorp1)
+```
+
+## sor p2
+```{r sor p2 11}
+# dataset = readRDS("brms_models_replicates//similarityreplicates_bc_sor.RDS")
+# # Period 1 bray Curtis
+# options(mc.cores = parallel::detectCores())
+# rstan::rstan_options(auto_write = TRUE)
+# Sys.setenv(LOCAL_CPPFLAGS = '-march=native')
+# 
+# d = dataset %>%  filter(day > 28, distance == "Sørensen") %>% mutate(time = day-mean(day))
+# 
+# my_formulas = list(
+# f.m11.1 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.2 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.3 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.4 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.5 = bf(value  ~ time * selection * nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.6 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.7 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.8 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.9 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.10 = bf(value  ~ time * selection + nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.11 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection),
+# f.m11.12 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time+selection),
+# f.m11.13 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.14 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.15 = bf(value  ~ time + selection + nutrient  + (1 | comparison), sigma ~time+selection+nutrient),
+# 
+# f.m11.16 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection),
+# f.m11.17 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time+selection),
+# f.m11.18 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection*nutrient),
+# f.m11.19 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time*selection+nutrient),
+# f.m11.20 = bf(value  ~ time + selection  + (1 | comparison), sigma ~time+selection+nutrient)
+# 
+# )
+# 
+# models_nor = vector(mode = "list", length = length(my_formulas))
+# names(models_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# loos_nor = vector(mode = "list", length = length(my_formulas))
+# names(loos_nor) = paste0(substring(names(my_formulas), 3), "_nor")
+# 
+# for (i in 1:length(my_formulas)) {
+#   prior_normal = get_prior(my_formulas[[i]], data = d, family= gaussian())
+#   model_nor = brm(my_formulas[[i]], family= gaussian(), data=d, iter = 4000, warmup = 2000,
+#                   prior = prior_normal, control = list(adapt_delta = 0.99))
+#   loo_model_nor = loo(model_nor, reloo = TRUE)
+#   models_nor[[i]] = model_nor
+#   loos_nor[[i]] = loo_model_nor
+# }
+# 
+# models = list(models_nor)
+# loos = list(loos_nor)
+# saveRDS(models, "brms_models_replicates/models_period2_sorensen_replicatedivergence_m11_20052020.RDS")
+# saveRDS(loos, "brms_models_replicates/loos_period2_sorensen_replicatedivergence_m11_20052020.RDS")
+```
+
+```{r loos m11 s p2 }
+loos = readRDS("brms_models_replicates/loos_period2_sorensen_replicatedivergence_m11_20052020.RDS")
+loos = loos[[1]]
+loocomparisons_loo = loo_compare(loos)
+loocomparisons = as_tibble(loocomparisons_loo)
+loocomparisons$model = rownames(loocomparisons_loo)
+loocomparisons$sd_times = loocomparisons$elpd_diff/loocomparisons$se_diff
+
+loocomp = loocomparisons[,c(1,9)]
+sorp2 = loocomp %>% mutate(m = str_remove(model, c("m11.")), dataset = "Sør_P2") %>% mutate(m = str_remove(m, c("_nor")))
+
+allelpd = bind_rows(allelpd , sorp2)
+```
+
+
+```{r}
+allelpd %>% mutate(elpd_diff = round(elpd_diff, 1), m = as.numeric(m)) %>%
+  ggplot(aes(x = m, fill = dataset, y = elpd_diff)) + 
+  geom_bar(stat = "identity", position = position_dodge(), color = "black") + 
+  geom_text(aes(label=elpd_diff), position=position_dodge(width=0.9), hjust = 1.1, size = 3, angle = 90)  +
+  my.theme + 
+  scale_fill_grey("Dataset") + 
+  facet_wrap(m~., scales = "free_x", nrow = 1) + 
+  coord_cartesian(expand = FALSE, ylim = c(-30,0)) + 
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) + 
+  xlab("Model") + 
+  ylab("Elpd_diff") + 
+  scale_x_discrete(position = "top") 
+
+allelpd %>% group_by(m) %>% summarise(sum(elpd_diff))
+
+a = allelpd %>% mutate(elpd_diff = round(elpd_diff, 1), m = as.numeric(m))
+```
+
+
+# model m11.1 chosen 
+
+```{r}
+bp1 = readRDS("brms_models_replicates/models_period1_braycurtis_replicatedivergence_m11_20052020.RDS")
+bp2 = readRDS("brms_models_replicates/models_period2_braycurtis_replicatedivergence_m11_20052020.RDS")
+sp1 = readRDS("brms_models_replicates/models_period1_sorensen_replicatedivergence_m11_20052020.RDS")
+sp2 = readRDS("brms_models_replicates/models_period2_sorensen_replicatedivergence_m11_20052020.RDS")
+
+bp1 =bp1[[1]]$m11.1_nor
+bp2 = bp2[[1]]$m11.1_nor
+sp1 = sp1[[1]]$m11.1_nor
+sp2 = sp2[[1]]$m11.1_nor
+```
+

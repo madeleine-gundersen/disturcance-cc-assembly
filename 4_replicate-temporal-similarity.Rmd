@@ -1,0 +1,199 @@
+---
+title: "4_replicate-temporal-similarity "
+---
+The similarity between replicates was calculated. First we divided the dataset based om the cultivation regime. 
+
+```{r}
+exp_2_50 = readRDS("exp_2.50.rds")
+library(phyloseq)
+CDH = phyloseq::subset_samples(exp_2_50, treatment == "UDH")
+CDL = phyloseq::subset_samples(exp_2_50, treatment == "UDL")
+DCL = phyloseq::subset_samples(exp_2_50, treatment == "DUL")
+DCH = phyloseq::subset_samples(exp_2_50, treatment == "DUH")
+
+treatment = list(CDH = CDH, CDL = CDL, DCL = DCL, DCH = DCH)
+```
+
+```{r similarity between replicates}
+#first calculate the Bray Curtis dissimilarity
+comparisons_bc = data.frame()
+for (k in 1:length(treatment)) {
+#fist extract OTU matrix
+OTU = data.frame(treatment[[k]]@otu_table)
+#vegan takes in the OTU matrix with OTUs as columns and samples as rows, need to transform
+OTU.t = t(OTU)
+
+bc.d = 1-vegan::vegdist(x = OTU.t, method = "bray", binary = FALSE)  #View(as.matrix(bc.d))
+bc.d.m = as.matrix(bc.d)
+days = unique(sort(treatment[[k]]@sam_data$Day))
+treatment.c = treatment[[k]]@sam_data$treatment
+selection = treatment[[k]]@sam_data$Sel_sampling
+nutrient = treatment[[k]]@sam_data$Nutrient
+period = treatment[[k]]@sam_data$Period
+week = treatment[[k]]@sam_data$Week
+
+bc_df = data.frame(day = days,
+                   week = week[seq(from = 1, to = length(week), by = 3)],
+                treatment = treatment.c[1:length(days)],
+                selection = selection[seq(from = 1, to = length(selection), by = 3)],
+                nutrient = nutrient[1:length(days)],
+                period = period[seq(from = 1, to = length(period), by = 3)],
+                replica1_2 = NA, replica1_3 = NA,
+                replica2_3 = NA)
+
+samples = rownames(bc.d.m)
+
+for (i in 1:length(bc_df$day)) {
+  for (j in 1:length(samples)) {
+    sample = samples[j]
+    day = substring(sample, 6)
+    if (day == bc_df$day[i]) {
+      replica = substring(sample, 4,4)
+      if (replica == "1") {
+        replica_1 = as.data.frame(subset(bc.d.m, subset = row.names(bc.d.m) %in% sample))
+        replica_2 = paste0(treatment.c[1],"2",".",day, sep = "")
+        replica_3 =paste(treatment.c[1],"3",".",day, sep = "")
+
+        if (is.null(replica_1[[replica_2]])) {
+          bc_df$replica1_2[i] = NA}
+        else {
+          bc_df$replica1_2[i] = replica_1[[replica_2]]}
+        if (is.null(replica_1[[replica_3]])) {
+          bc_df$replica1_3[i] = NA }
+        else {
+          bc_df$replica1_3[i] = replica_1[[replica_3]]}}
+      else if (replica == "2") {
+        replica_2 = as.data.frame(subset(bc.d.m, subset = row.names(bc.d.m) %in% sample))
+        replica_3 =paste(treatment.c[1],"3",".",day, sep = "")
+        if (is.null(replica_2[[replica_3]])) {
+          bc_df$replica2_3[i] = NA }
+        else {
+        bc_df$replica2_3[i] = replica_2[[replica_3]]}}
+    else {}}}}
+comparisons_bc = rbind(comparisons_bc, bc_df)
+}
+comparisons_bc$distance = "Bray-Curtis"
+
+#first calculate the Sørensen dissimilarity
+comparisons_sor = data.frame()
+for (k in 1:length(treatment)) {
+#fist extract OTU matrix
+OTU = data.frame(treatment[[k]]@otu_table)
+#vegan takes in the OTU matrix with OTUs as columns and samples as rows, need to transform
+OTU.t = t(OTU)
+
+sor.d = 1-vegan::vegdist(x = OTU.t, method = "bray", binary = TRUE)  #View(as.matrix(bc.d))
+sor.d.m = as.matrix(sor.d)
+days = unique(sort(treatment[[k]]@sam_data$Day))
+treatment.c = treatment[[k]]@sam_data$treatment
+selection = treatment[[k]]@sam_data$Sel_sampling
+nutrient = treatment[[k]]@sam_data$Nutrient
+period = treatment[[k]]@sam_data$Period
+week =  treatment[[k]]@sam_data$Week
+sor_df = data.frame(day = days,
+                    week = week[seq(from = 1, to = length(week), by = 3)],
+                treatment = treatment.c[1:length(days)],
+                selection = selection[seq(from = 1, to = length(selection), by = 3)],
+                nutrient = nutrient[1:length(days)],
+                period = period[seq(from = 1, to = length(period), by = 3)],
+                replica1_2 = NA, replica1_3 = NA,
+                replica2_3 = NA)
+
+samples = rownames(sor.d.m)
+
+for (i in 1:length(sor_df$day)) {
+  for (j in 1:length(samples)) {
+    sample = samples[j]
+    day = substring(sample, 6)
+    if (day == sor_df$day[i]) {
+      replica = substring(sample, 4,4)
+      if (replica == "1") {
+        replica_1 = as.data.frame(subset(sor.d.m, subset = row.names(sor.d.m) %in% sample))
+        replica_2 = paste0(treatment.c[1],"2",".",day, sep = "")
+        replica_3 =paste(treatment.c[1],"3",".",day, sep = "")
+
+        if (is.null(replica_1[[replica_2]])) {
+          sor_df$replica1_2[i] = NA}
+        else {
+          sor_df$replica1_2[i] = replica_1[[replica_2]]}
+        if (is.null(replica_1[[replica_3]])) {
+          sor_df$replica1_3[i] = NA }
+        else {
+          sor_df$replica1_3[i] = replica_1[[replica_3]]}}
+      else if (replica == "2") {
+        replica_2 = as.data.frame(subset(sor.d.m, subset = row.names(sor.d.m) %in% sample))
+        replica_3 =paste(treatment.c[1],"3",".",day, sep = "")
+        if (is.null(replica_2[[replica_3]])) {
+          sor_df$replica2_3[i] = NA }
+        else {
+        sor_df$replica2_3[i] = replica_2[[replica_3]]}}
+    else {}}}}
+comparisons_sor = rbind(comparisons_sor, sor_df)
+}
+comparisons_sor$distance = "Sørensen"
+
+replicates_diff = rbind(comparisons_bc, comparisons_sor)
+replicates_diff = reshape2::melt(replicates_diff, id = c("day", "week", "treatment","selection", "nutrient", "distance", "period"))
+replicates_diff$comparison = paste(replicates_diff$treatment, "_", replicates_diff$variable, sep = "")
+
+replicates_diff = na.omit(replicates_diff)
+
+saveRDS(replicates_diff, file = "similarityreplicates_bc_sor.RDS")
+```
+
+```{r }
+library(dplyr)
+library(ggplot2)
+source(file = "plot.settings.paper.R")
+rep_div = replicates_diff %>% 
+   mutate(disturbed = case_when(selection == "U" ~"no", 
+                                    selection == "D" ~"yes")) %>% 
+  mutate(treatment = factor(treatment, levels = c("UDH", "UDL", "DUH", "DUL"))) %>% 
+  ggplot2::ggplot(aes(x = day, y = value)) + 
+  facet_wrap(~distance, nrow = 2) + 
+  my.theme + 
+  geom_vline(xintercept = 28.5) + 
+  
+  geom_point(aes(shape = treatment, fill = disturbed), color = "black", size = 2.5) +   
+  geom_point(aes(shape = treatment, fill = disturbed, color = disturbed), size = 2) + 
+  geom_smooth(method = "lm", formula = "y~x", aes(group=interaction(disturbed, treatment), linetype = nutrient, 
+                                            color = disturbed), size = 1, se =FALSE) + 
+  scale_shape_manual("Regime", values = c(16,1,17,2)) +
+ scale_color_manual("Periodically disturbed", values = c(my.selection.values[c(1,3)])) + 
+  scale_fill_manual("Periodically disturbed", values = c(my.selection.values[c(1,3)])) + 
+  scale_linetype_manual("Carrying capacity", values = c("solid", "dashed")) + 
+  guides(linetype = guide_legend(override.aes = list(size=0.5, color = "black")), 
+          color = guide_legend(override.aes = list(linetype = NULL))) + 
+  ylab("Replicate divergence") + 
+  ggtitle("Replicate divergence")
+```
+
+```{r }
+sd.plot = replicates_diff %>% mutate(disturbed = case_when(selection == "U" ~"no", 
+                                    selection == "D" ~"yes")) %>% 
+  mutate(treatment = factor(treatment, levels = c("UDH", "UDL", "DUH", "DUL"))) %>%
+  group_by(day, week, treatment, nutrient, selection, distance, period, disturbed) %>%
+  summarise(
+    'mean_similarity' = round(mean(value, na.rm = TRUE),3),
+    'variance'  = round(stats::var(value, na.rm = TRUE),3), 
+    'sd' = round(stats::sd(value, na.rm = TRUE),3), 
+    '# estimates' = n()
+    )  %>% 
+  ggplot2::ggplot(aes(x = day, y = sd)) + 
+  facet_wrap(~distance, nrow = 2, scales = "free_y") + 
+  my.theme + 
+  geom_vline(xintercept = 28.5) + 
+  geom_point(aes(shape = treatment, fill = disturbed), color = "black", size = 2.5) +   
+  geom_point(aes(shape = treatment, fill = disturbed, color = disturbed), size = 2) + 
+  geom_smooth(method = "lm", formula = "y~x", aes(group=interaction(disturbed, treatment), linetype = nutrient, 
+                                            color = disturbed), size = 1, se =FALSE) + 
+  scale_shape_manual("Regime", values = c(16,1,17,2)) +
+ scale_color_manual("Periodically disturbed", values = c(my.selection.values[c(1,3)])) + 
+  scale_fill_manual("Periodically disturbed", values = c(my.selection.values[c(1,3)])) + 
+  scale_linetype_manual("Carrying capacity", values = c("solid", "dashed")) + 
+  guides(linetype = guide_legend(override.aes = list(size=0.5, color = "black")), 
+         color = guide_legend(override.aes = list(linetype = NULL))) + 
+  ylab("Standard deviation") + 
+ggtitle("Standard deviation")
+
+```

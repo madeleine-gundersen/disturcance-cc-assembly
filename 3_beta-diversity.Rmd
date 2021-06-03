@@ -1,0 +1,299 @@
+---
+title: "3_beta-diversity"
+---
+# Beta diversity PCoA plots
+
+```{r calculate ordinations}
+library(phyloseq)
+exp_2.50 = readRDS("exp_2.50.rds")
+# for plotting we choose to show the two last weeks of each cultivation period.
+endweeks = phyloseq::subset_samples(exp_2.50, Week %in% c(3,4,6,7))
+dist = c("Bray_Curtis", "Sørensen")
+plotlist = vector("list", length = 2) #make a list with the length of the dist string
+names(plotlist) = dist #renames the list
+physeq = phyloseq::prune_taxa(taxa_sums(endweeks)>0, endweeks)
+ordination = phyloseq::ordinate(physeq = physeq, method = "PCoA", distance = "bray") 
+plotlist[[1]]$ordination = ordination
+plot = phyloseq::plot_ordination(physeq = physeq, ordination = ordination, title = "Bray-Curtis",  axes = c(1,2))
+plotlist[[1]]$plot = plot
+#Sørensen has to be calculated with the vegan package
+OTU_table = as.matrix(physeq@otu_table)
+OTU_table = as.matrix(OTU_table@.Data)
+OTU_table = t(OTU_table)
+sorensen = vegan::vegdist(OTU_table, method = "bray", binary = TRUE) #binary as true makes it Sørensen. This funtion calculates the dissimilarity matrix
+sorensen_ordination = phyloseq::ordinate(physeq = physeq, method = "PCoA", distance = sorensen)
+plot = phyloseq::plot_ordination(physeq = physeq, 
+                                   ordination = sorensen_ordination, 
+                                   title = "Sørensen", 
+                                   axes = c(1,2)) 
+
+#adds the sorensen as a component to the plotlis
+plotlist$Sørensen$ordination = sorensen_ordination
+plotlist$Sørensen$plot = plot
+
+source("plot.settings.paper.R")
+```
+## Bray Curtis plot
+
+```{r bray curtis plot, fig.height=4, fig.width=7}
+bray_curtis_plot = plotlist$Bray_Curtis$plot + 
+  my.theme + 
+  ggConvexHull::geom_convexhull(alpha = 0.2, aes(fill = Disturbed)) +
+  theme(panel.border = element_rect(fill = NA), 
+        text = element_text(size = 10), 
+        legend.position = "bottom") +
+  geom_point(aes(shape = Regime), color = "black", size = 2.5) + 
+  geom_point(aes(color = Disturbed, shape = Regime), size = 2)  + 
+  facet_wrap(~Week, nrow = 2, labeller = label_both) + 
+  guides(fill=guide_legend(nrow = 2, override.aes=list(shape=NA, alpha = 1)), 
+         shape = guide_legend(nrow = 2, byrow = TRUE)) + 
+  scale_shape_manual("Regime",
+                     values = c(16,1,17,2)) + 
+  scale_fill_manual("Perodically disturbed",
+                    values = dist.col) + 
+  scale_color_manual("Perodically disturbed", 
+                    values = dist.col) + 
+  ggtitle(NULL) + 
+  coord_fixed(ratio = 14.6/38.4)
+
+bray_curtis_plot$layers <- bray_curtis_plot$layers[-1] 
+bray_curtis_plot
+```
+
+
+```{r sorensen plot}
+sorensenplot = plotlist$Sørensen$plot + 
+  my.theme + 
+  ggConvexHull::geom_convexhull(alpha = 0.2, aes(fill = Disturbed)) +
+  theme(panel.border = element_rect(fill = NA), 
+        text = element_text(size = 10), 
+        legend.position = "bottom") +
+  geom_point(aes(shape = Regime), color = "black", size = 2.5) + 
+  geom_point(aes(color = Disturbed, shape = Regime), size = 2)  + 
+  facet_wrap(~Week, nrow = 2, labeller = label_both) + 
+  guides(fill=guide_legend(nrow = 2, override.aes=list(shape=NA, alpha = 1)), 
+         shape = guide_legend(nrow = 2, byrow = TRUE)) + 
+  scale_shape_manual("Regime",
+                     values = c(16,1,17,2)) + 
+  scale_fill_manual("Perodically disturbed",
+                    values = dist.col) + 
+  scale_color_manual("Perodically disturbed", 
+                    values = dist.col) + 
+  ggtitle(NULL) + 
+  coord_fixed(ratio = 11.5/21.1)
+
+sorensenplot$layers <- sorensenplot$layers[-1] 
+sorensenplot
+```
+
+# PERMANOVA
+```{r}
+# we will only calucate permanova for the endweeks in each selection period (week 4 and 7) as this is when the microcosms were at the end of a cultivation regime
+library(tibble)
+# week 4
+week4 = phyloseq::subset_samples(endweeks, Week == 4)
+OTU_table = as.matrix(week4@otu_table)
+OTU_table = as.matrix(OTU_table@.Data)
+OTU_table = t(OTU_table)
+bc_diss = vegan::vegdist(OTU_table, method = "bray", binary = FALSE)
+sorensen_diss = vegan::vegdist(OTU_table, method = "bray", binary = TRUE)
+sample_data = tibble::as_tibble(sample_data(week4))
+vegan::adonis(bc_diss ~ Sel_sampling, permutations = 999, method = "bray", data = sample_data)
+vegan::adonis(sorensen_diss ~ Sel_sampling, permutations = 999, method = "bray", data = sample_data)
+
+vegan::adonis(bc_diss ~ Nutrient, permutations = 999, method = "bray", data = sample_data)
+vegan::adonis(sorensen_diss ~ Nutrient, permutations = 999, method = "bray", data = sample_data)
+
+# week 7
+week7 = phyloseq::subset_samples(endweeks, Week == 7)
+OTU_table = as.matrix(week7@otu_table)
+OTU_table = as.matrix(OTU_table@.Data)
+OTU_table = t(OTU_table)
+bc_diss = vegan::vegdist(OTU_table, method = "bray", binary = FALSE)
+sorensen_diss = vegan::vegdist(OTU_table, method = "bray", binary = TRUE)
+sample_data = as_tibble(sample_data(week7))
+vegan::adonis(bc_diss ~ Sel_sampling, permutations = 999, method = "bray", data = sample_data)
+vegan::adonis(sorensen_diss ~ Sel_sampling, permutations = 999, method = "bray", data = sample_data)
+vegan::adonis(bc_diss ~ Nutrient, permutations = 999, method = "bray", data = sample_data)
+vegan::adonis(sorensen_diss ~ Nutrient, permutations = 999, method = "bray", data = sample_data)
+```
+
+
+## All samples
+```{r }
+exp_2.50 = readRDS("exp_2.50.rds")
+dist = c("Bray_Curtis", "Sørensen")
+sample_data(exp_2.50)$Switch = factor(sample_data(exp_2.50)$Switch, levels = c("Before", "After") ) 
+sample_data(exp_2.50)$Replicate = as.character(sample_data(exp_2.50)$Replicate)
+plotlist = vector("list", length = 2) #make a list with the length of the dist string
+names(plotlist) = dist #renames the list
+physeq = phyloseq::prune_taxa(taxa_sums(exp_2.50)>0, exp_2.50)
+
+ordination = phyloseq::ordinate(physeq = physeq, method = "PCoA", distance = "bray") 
+plotlist[[1]]$ordination = ordination
+plot = phyloseq::plot_ordination(physeq = physeq, ordination = ordination, title = "Bray-Curtis",  axes = c(1,2))
+plotlist[[1]]$plot = plot
+#Sørensen has to be calculated with the vegan package
+OTU_table = as.matrix(physeq@otu_table)
+OTU_table = as.matrix(OTU_table@.Data)
+OTU_table = t(OTU_table)
+sorensen = vegan::vegdist(OTU_table, method = "bray", binary = TRUE) #binary as true makes it Sørensen. This funtion calculates the dissimilarity matrix
+sorensen_ordination = phyloseq::ordinate(physeq = physeq, method = "PCoA", distance = sorensen)
+plot = phyloseq::plot_ordination(physeq = physeq, 
+                                   ordination = sorensen_ordination, 
+                                   title = "Sørensen", 
+                                   axes = c(1,2)) 
+
+#adds the sorensen as a component to the plotlis
+plotlist$Sørensen$ordination = sorensen_ordination
+plotlist$Sørensen$plot = plot
+
+source("plot.settings.paper.R")
+```
+
+```{r}
+a = plotlist$Bray_Curtis$plot + 
+  my.theme + 
+  ggConvexHull::geom_convexhull(alpha = 0.2, aes(fill = Disturbed)) +
+  theme(panel.border = element_rect(fill = NA), 
+        text = element_text(size = 10), 
+        legend.position = "bottom") +
+  geom_point(aes(shape = Regime), color = "black", size = 2.5) + 
+  geom_point(aes(color = Disturbed, shape = Regime), size = 1.8)  + 
+  facet_wrap(~Week, nrow = 2, labeller = label_both) + 
+  guides(fill=guide_legend(nrow = 2, override.aes=list(shape=NA, alpha = 1)), 
+         shape = guide_legend(nrow = 2, byrow = TRUE)) + 
+  scale_shape_manual("Regime",
+                     values = c(16,1,17,2)) + 
+  scale_fill_manual("Perodically disturbed",
+                    values = dist.col) + 
+  scale_color_manual("Perodically disturbed", 
+                    values = dist.col) + 
+  ggtitle("Bray-Curtis PCoA ordination - All samples - subsetted by weeks")
+
+a$layers <- a$layers[-1] 
+a
+
+b = plotlist$Bray_Curtis$plot + 
+  my.theme + 
+  theme(panel.border = element_rect(fill = NA), 
+        text = element_text(size = 10), 
+        legend.position = "bottom") +
+  geom_point(aes(shape = Regime), color = "black", size = 2.5) + 
+  geom_point(aes(color = Disturbed, shape = Regime), size = 1.8)  + 
+  guides(fill=guide_legend(nrow = 2, override.aes=list(shape=NA, alpha = 1)), 
+         shape = guide_legend(nrow = 2, byrow = TRUE)) + 
+  scale_shape_manual("Regime",
+                     values = c(16,1,17,2)) + 
+  scale_fill_manual("Perodically disturbed",
+                    values = dist.col) + 
+  scale_color_manual("Perodically disturbed", 
+                    values = dist.col) + 
+  ggtitle("Bray-Curtis PCoA ordination - All samples") 
+b$layers <- b$layers[-1] 
+b
+
+ggpubr::ggarrange(b,a, nrow = 2, common.legend = TRUE, legend = "right", labels = c("a", "b"))
+```
+
+```{r}
+plot = plotlist$Bray_Curtis$plot
+plot$layers <- plot$layers[-1] 
+
+sample_data(exp_2.50)
+plot + 
+  my.theme + 
+  theme(panel.border = element_rect(fill = NA), 
+        legend.position = "bottom") + 
+  ggh4x::facet_nested(Carrying.capacity~selection.group+Switch+Sel_sampling, labeller = label_both)  + 
+  geom_path(aes(x=Axis.1,y=Axis.2,group=Replicate, 
+                  linetype = Replicate, color = Replicate), size = 0.8) + 
+  geom_point(aes(shape = Replicate), fill = "white", color = "black", size = 4)  + 
+  geom_text(aes(label = Day), size = 2.5, show.legend = FALSE) + 
+  scale_shape_manual("Replicate", 
+                     values = c(21,22,23)) + 
+  scale_fill_manual("Replicate",
+                    values = cb_palette[c(1,3,5)]) + 
+  scale_color_manual("Replicate", 
+                    values = cb_palette[c(1,3,5)]) +
+  theme(legend.key.width = unit(1.5,"cm"), 
+        legend.position = "right") + 
+  ggtitle("Bray Curtis - PCoA ordination")
+```
+
+## First week 
+
+```{r }
+exp_nor = readRDS("sel_cc_exp_nor.rds")
+
+#changed the abbrevation from continiously supplied media to undisturbed and added some more metadata
+library(stringr)
+sample_names(exp_nor)[3:204] = stringr::str_replace(sample_names(exp_nor)[3:204], "C", "U")
+#converts your excel document to a data frame 
+variables = readxl::read_xlsx("~/Doktorgrad_R/Analyse_dispersalpaper_lokal/data/Metadata_dist.xlsx", sheet = 1) %>% as.data.frame
+#changes the row names to the sample names. These must be the same as the sample names in the OTU file 
+row.names(variables)=variables$`Sample name` 
+#deletes the column with sample names 
+variables %>% subset.data.frame(drop=TRUE, select = -1) 
+variables$ChDay = paste0("Day ", variables$Day, sep = "")
+#converts the data.frame to phyloseq class 
+sam_variables = phyloseq::sample_data(variables) 
+sample_data(exp_nor) = sam_variables
+
+
+exp_all = exp_nor
+
+exp_all = subset_samples(physeq = exp_all, Week == 1)
+exp_all = subset_samples(physeq = exp_all, Day != 0)
+dist = c("Bray_Curtis", "Sørensen")
+sample_data(exp_all)$Switch = factor(sample_data(exp_all)$Switch, levels = c("Before", "After") ) 
+sample_data(exp_all)$Replicate = as.character(sample_data(exp_all)$Replicate)
+plotlist = vector("list", length = 2) #make a list with the length of the dist string
+names(plotlist) = dist #renames the list
+physeq = phyloseq::prune_taxa(taxa_sums(exp_all)>0, exp_all)
+
+ordination = phyloseq::ordinate(physeq = physeq, method = "PCoA", distance = "bray") 
+plotlist[[1]]$ordination = ordination
+plot = phyloseq::plot_ordination(physeq = physeq, ordination = ordination, title = "Bray-Curtis",  axes = c(1,2))
+plotlist[[1]]$plot = plot
+#Sørensen has to be calculated with the vegan package
+OTU_table = as.matrix(physeq@otu_table)
+OTU_table = as.matrix(OTU_table@.Data)
+OTU_table = t(OTU_table)
+sorensen = vegan::vegdist(OTU_table, method = "bray", binary = TRUE) #binary as true makes it Sørensen. This funtion calculates the dissimilarity matrix
+sorensen_ordination = phyloseq::ordinate(physeq = physeq, method = "PCoA", distance = sorensen)
+plot = phyloseq::plot_ordination(physeq = physeq, 
+                                   ordination = sorensen_ordination, 
+                                   title = "Sørensen", 
+                                   axes = c(1,2)) 
+
+#adds the sorensen as a component to the plotlis
+plotlist$Sørensen$ordination = sorensen_ordination
+plotlist$Sørensen$plot = plot
+
+source("plot.settings.paper.R")
+```
+
+```{r}
+a = plotlist$Bray_Curtis$plot + 
+  my.theme + 
+  ggConvexHull::geom_convexhull(alpha = 0.2, aes(fill = Disturbed)) +
+  theme(panel.border = element_rect(fill = NA), 
+        text = element_text(size = 10), 
+        legend.position = "bottom") +
+  geom_point(aes(shape = Regime), color = "black", size = 2.5) + 
+  geom_point(aes(color = Disturbed, shape = Regime), size = 1.8)  + 
+  facet_wrap(~Day, nrow = 2, labeller = label_both) + 
+  guides(fill=guide_legend(nrow = 2, override.aes=list(shape=NA, alpha = 1)), 
+         shape = guide_legend(nrow = 2, byrow = TRUE)) + 
+  scale_shape_manual("Regime",
+                     values = c(16,1,17,2)) + 
+  scale_fill_manual("Perodically disturbed",
+                    values = dist.col) + 
+  scale_color_manual("Perodically disturbed", 
+                    values = dist.col) + 
+  ggtitle("Bray-Curtis PCoA ordination - All samples - subsetted by weeks")
+
+a$layers <- a$layers[-1] 
+a
+```

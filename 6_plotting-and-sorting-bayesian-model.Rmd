@@ -1,0 +1,714 @@
+---
+title: "6_plotting-and-analysing the Bayesian models"
+---
+
+```{r}
+library(dplyr)
+library(tidybayes)
+library(data.table)
+library(modelr)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+
+source(file = "plot.settings.paper.R")
+```
+
+# Load chosen models
+The model chosen (m11) is loaded along with metadata
+```{r}
+#load data 
+metadata_replicates =  readRDS("similarityreplicates_bc_sor.RDS")
+
+metadata_replicates = metadata_replicates %>% mutate(selection_group = substring(treatment, 1,2)) %>%
+    mutate(disturbed = case_when(selection == "C" ~"no", 
+                                    selection == "D" ~"yes")) %>% mutate(time = day - mean(day))
+
+period1_bc = readRDS("models_period1_braycurtis_replicatedivergence_m11_20052020.RDS")
+period1_sor = readRDS("models_period1_sorensen_replicatedivergence_m11_20052020.RDS")
+period2_bc = readRDS("models_period2_braycurtis_replicatedivergence_m11_20052020.RDS")
+period2_sor =readRDS("models_period2_sorensen_replicatedivergence_m11_20052020.RDS")
+
+m_p1_b = period1_bc[[1]]$m11.1_nor 
+m_p1_s = period1_sor[[1]]$m11.1_nor 
+m_p2_b =  period2_bc[[1]]$m11.1_nor 
+m_p2_s = period2_sor[[1]]$m11.1_nor 
+
+rm(period1_bc, period1_sor, period2_bc, period2_sor)
+```
+
+# Bray Curtis
+## Mean BC change in both periods 
+average values at start and end of each period.
+```{r mean rep bc sim}
+mean.sim.rep = metadata_replicates.bc %>% filter(day %in% c(2,28,29,50)) %>% group_by(disturbed, day, selection_group) %>% 
+  summarise(mean.sim = mean(value), sd.sim  = sd(value))
+
+undist.p1 = (mean.sim.rep$mean.sim[2] - mean.sim.rep$mean.sim[1]) / mean.sim.rep$mean.sim[1]*100
+undist.p2 = (mean.sim.rep$mean.sim[4] - mean.sim.rep$mean.sim[3]) / mean.sim.rep$mean.sim[3]*100
+dist.p1 = (mean.sim.rep$mean.sim[6] - mean.sim.rep$mean.sim[5]) / mean.sim.rep$mean.sim[5]*100
+dist.p2 = (mean.sim.rep$mean.sim[8] - mean.sim.rep$mean.sim[7]) / mean.sim.rep$mean.sim[7]*100
+
+data.frame(undist.p1, undist.p2, dist.p1, dist.p2)
+```
+
+First we plot the raw data and model for the BC models
+## model with raw data 
+```{r}
+metadata_replicates_p1_b = metadata_replicates %>% filter(day < 29) %>% filter(distance == "Bray-Curtis")
+metadata_replicates_p2_b = metadata_replicates %>% filter(day > 28) %>% filter(distance == "Bray-Curtis")
+
+model_p1_pred = metadata_replicates_p1_b %>%
+  group_by(selection, nutrient,day) %>%
+  modelr::data_grid(time = seq_range(time, n = 9)) %>%
+  tidybayes::add_fitted_draws(m_p1_b, re_formula = NA) %>% mutate(Period = "Period_1")
+model_p1_pred = tibble(model_p1_pred)
+
+model_p2_pred = metadata_replicates_p2_b %>%
+  group_by(selection, nutrient,day) %>%
+  data_grid(time = seq_range(time, n = 9)) %>%
+  add_fitted_draws(m_p2_b, re_formula = NA) %>% mutate(Period = "Period_2")
+
+both_predictions = bind_rows(model_p1_pred, model_p2_pred)
+both_predictions = tibble(both_predictions)
+
+both_predictions_bc = both_predictions %>% 
+  mutate(selection_group = case_when(day < 29 & selection == "C" ~"UD", 
+                                    day < 29 & selection == "D" ~"DU", 
+                                    day > 28 & selection == "C" ~"DU", 
+                                    day > 28 & selection == "D" ~"UD")) %>% 
+  mutate(regime = paste0(selection_group, nutrient)) %>%
+  mutate(disturbed = case_when(selection == "C" ~"no", 
+                               selection == "D" ~"yes")) %>% 
+  mutate(distance = "Bray-Curtis")
+ 
+metadata_replicates.bc = metadata_replicates %>% 
+  mutate(selection_group = substring(comparison, 1,2)) %>% 
+  mutate(regime = substring(comparison, 1,3)) %>% 
+  filter(distance == "Bray-Curtis") %>% 
+  mutate(selection_group = stringr::str_replace(selection_group, "C", "U"), 
+         regime = stringr::str_replace(regime, "C", "U"), 
+         comparison = stringr::str_replace(comparison, "C", "U")) %>% mutate(regime = factor(regime, levels = c("UDH", "UDL", "DUH", "DUL")))
+
+# saveRDS(object = both_predictions_bc, file = "both_predictions_bc_replicate_divergence_no_randomeffect.RDS")
+# saveRDS(object = metadata_replicates.bc, file = "metadata_replicates_bc_fixednames.RDS")
+```
+
+```{r}
+both_predictions_bc = readRDS("both_predictions_bc_replicate_divergence_no_randomeffect.RDS")
+metadata_replicates.bc = readRDS("metadata_replicates_bc_fixednames.RDS")
+
+bc.rep.sim = both_predictions_bc %>% 
+  ggplot(aes(x = day, y = value, color = disturbed)) +
+  stat_lineribbon(aes(y = .value, group = Period)) +
+  geom_point(data = metadata_replicates.bc, aes(shape = regime), color = "black", size = 2.5) +
+  geom_point(data = metadata_replicates.bc, aes(color = disturbed, shape = regime), size = 2) +
+  facet_grid(~selection_group) + 
+  my.theme + 
+  ylab("Bray-Curtis replicate similarity divercence") + 
+  scale_color_manual("Periodically disturbed", values = dist.col) + 
+  scale_fill_manual("Confidence interval" ,values = alpha(c("grey86", "grey76", "grey50"),0.5)) + 
+  scale_shape_manual("Regime", values = my.selection.shapes[c(2,1,4,3)]) + 
+  geom_vline(xintercept = 28.5) +
+  theme(legend.key.size = unit(0.3, "cm"), 
+        axis.title.y = element_text(size = 8)) + 
+  coord_cartesian(ylim = c(0,1), expand = FALSE,  xlim = c(1,51)) 
+```
+
+## Sigma estimation
+```{r}
+bcmodels = list(m_p1_b,m_p2_b)
+sigma_rates = data.frame()
+
+for (i in 1:2) {
+  m = bcmodels[[i]]
+  post = brms::posterior_samples(m)
+  sigma_rate_model =  post %>% dplyr::transmute(C = b_sigma_time, 
+                                                D = b_sigma_time + `b_sigma_time:selectionD`) %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Bray_Curtis") 
+  colnames(sigma_rate_model) = c("selection","sigma_rate","Period" ,"model" )
+  sigma_rates = bind_rows(sigma_rates, sigma_rate_model)
+}
+
+sigma_rates = sigma_rates %>% mutate(disturbed = case_when(selection == "C" ~"no", 
+                                    selection == "D" ~"yes"), 
+                                    
+                                    peri.dis = paste0(disturbed, " P", substring(Period, 8)))
+
+#saveRDS(object = sigma_rates, file = "simga_rates_BC.RDS")
+```
+
+```{r}
+sigma_rates = readRDS(file = "simga_rates_BC.RDS")
+
+sigma  = sigma_rates %>% 
+ggplot(aes(x = sigma_rate, fill = disturbed, group = disturbed, y = disturbed)) +  
+  my.theme + 
+  facet_grid(~Period) + 
+  stat_slab(color = "black", size = 0.4, alpha = 0.9) + 
+  scale_fill_manual("Periodically disturbed", values = dist.col) + 
+  xlab(expression(paste(Delta, sigma ,"/day"))) + 
+  geom_vline(xintercept = 0) + 
+  coord_cartesian(expand = FALSE)  +
+  theme(axis.ticks.y = element_blank(), legend.position = "bottom") + 
+    guides(fill = guide_legend(ncol = 1)) + 
+    scale_x_continuous(breaks = c( -0.05, 0.05))
+
+```
+
+## replicate divergence change per day
+```{r time rate calc bc}
+bcmodels = list(m_p1_b,m_p2_b)
+
+time_rates = data.frame()
+for (i in 1:2) {
+  m = bcmodels[[i]]
+  post = posterior_samples(m)
+  if (i == 1) {
+  time_rate_model =  post %>% dplyr::transmute(CDH = b_time, 
+                                               CDL = b_time + `b_time:nutrientL`,  
+                                               DCH = b_time + `b_time:selectionD`, 
+                                               DCL = b_time + `b_time:selectionD` + 
+                                                 `b_time:nutrientL` + `b_time:selectionD:nutrientL`) %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Bray_Curtis", 
+                           selection = substring(key, 1,1), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+  
+  colnames(time_rate_model)[1:2] =c("regime" ,   "time_rate")
+  time_rates = bind_rows(time_rates, time_rate_model)
+  }
+else{
+    time_rate_model =  post %>% dplyr::transmute(DCH = b_time, 
+                                               DCL = b_time + `b_time:nutrientL`, 
+                                               CDH = b_time + `b_time:selectionD`, 
+                                               CDL = b_time + `b_time:selectionD` + `b_time:nutrientL` + `b_time:selectionD:nutrientL`) %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Bray_Curtis", 
+                           selection = substring(key, 2,2), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+    
+    colnames(time_rate_model)[1:2] =c("regime" ,   "time_rate" )
+    time_rates = bind_rows(time_rates, time_rate_model)
+    
+}
+}
+
+#saveRDS(object = time_rates, file = "rep_div_change_BC.RDS")
+```
+
+```{r}
+time_rates = readRDS(file = "rep_div_change_BC.RDS")
+
+time = time_rates %>% 
+  ggplot(aes(x = time_rate, fill = reg, group = reg, y = disturbed)) +  
+  my.theme + 
+  facet_grid(~Period) + 
+  stat_slab(color = "black",  size = 0.4, alpha = 0.9) + 
+  scale_fill_manual("Periodically disturbed", values = a) + 
+  xlab(expression(paste(Delta, "replicate similarity/day"))) +  
+  geom_vline(xintercept = 0) + 
+  coord_cartesian(expand = FALSE)  +
+  theme(#axis.title.y = element_blank(), 
+        #axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank(), legend.position = "bottom") + 
+    guides(fill = guide_legend(ncol = 1)) + 
+  scale_x_continuous(breaks = c(-0.02, 0, 0.02))
+
+```
+
+## combined plot 
+```{r composite figure bc}
+
+ggarrange(
+  bc.rep.sim, 
+  ggarrange(time, sigma, labels = c("b", "c"), legend = "none"), 
+  ncol = 1, labels = c("a"), common.legend = TRUE, legend = "right", 
+  heights = c(1.5,1) )
+```
+
+## sigma and time rate plot
+
+We can categorise each draw of the model as either selection, drift or unclassified based on the similarity and sigma change per day. 
+```{r}
+bcmodels = list(m_p1_b,m_p2_b)
+quant = data.frame()
+for (i in 1:2) {
+m = bcmodels[[i]]
+post = posterior_samples(m)
+ if (i == 1) { 
+   time_reg =post %>% dplyr::transmute(CDH_time = b_time, 
+                          CDL_time = b_time + `b_time:nutrientL`,  
+                          DCH_time = b_time + `b_time:selectionD`, 
+                          DCL_time = b_time + `b_time:selectionD` + `b_time:nutrientL` + `b_time:selectionD:nutrientL`) %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), 
+                           model = "Bray_Curtis", 
+                           selection = substring(key, 1,1), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+
+sig_reg = post %>% dplyr::transmute(
+                          CDH_sig = b_sigma_time, 
+                          CDL_sig = b_sigma_time,
+                          DCH_sig =b_sigma_time + `b_sigma_time:selectionD`, 
+                          DCL_sg = b_sigma_time + `b_sigma_time:selectionD`)  %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Bray_Curtis", 
+                           selection = substring(key, 1,1), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+
+colnames(time_reg)[2] = "sim_change"
+colnames(sig_reg)[2] = "sigma_change"
+time_reg$key = seq(1, nrow(time_reg), 1)
+sig_reg$key = seq(1, nrow(sig_reg), 1)
+
+both_p1 = merge.data.frame(time_reg, sig_reg)
+ } else {
+   
+   time_reg =post %>% dplyr::transmute(DCH_time = b_time, 
+                          DCL_time = b_time + `b_time:nutrientL`,  
+                          CDH_time = b_time + `b_time:selectionD`, 
+                          CDL_time = b_time + `b_time:selectionD` + `b_time:nutrientL` + `b_time:selectionD:nutrientL`)  %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Bray_Curtis", 
+                           selection = substring(key, 2,2), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+
+sig_reg = post %>% dplyr::transmute(
+                          DCH_sig = b_sigma_time, 
+                          DCL_sig = b_sigma_time,
+                          CDH_sig =b_sigma_time + `b_sigma_time:selectionD`, 
+                          CDL_sg = b_sigma_time + `b_sigma_time:selectionD`)  %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Bray_Curtis", 
+                           selection = substring(key, 2,2), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+
+colnames(time_reg)[2] = "sim_change"
+colnames(sig_reg)[2] = "sigma_change"
+time_reg$key = seq(1, nrow(time_reg), 1)
+sig_reg$key = seq(1, nrow(sig_reg), 1)
+
+both_p2 = merge.data.frame(time_reg, sig_reg)
+ }}
+
+processes = bind_rows(both_p1, both_p2)
+processes_quant = processes %>%
+  mutate(process = case_when( (sim_change >= 0 & sigma_change <= 0) ~ "selection", 
+                                          (sim_change < 0 & sigma_change > 0) ~ "drift", 
+                              TRUE ~ "mix"))
+
+#write.csv(x = processes_quant, file = "drift_sel_perdraw.csv")
+```
+
+```{r}
+processes_quant = read.csv("drift_sel_perdraw.csv")
+
+sigma = processes_quant %>% group_by(model, selection, peri.dis, Period) %>% 
+  median_qi(sigma = sigma_change, .width = 0.95) 
+
+similarity = processes_quant %>% group_by(model, selection, peri.dis, Period) %>% 
+  median_qi(similarity = sim_change, .width = 0.95)
+
+means_95_quantile = dplyr::left_join(similarity, sigma, by = c("model", "selection", "peri.dis", "Period"))
+```
+
+```{r}
+bc_quantile = means_95_quantile %>% mutate(dis  = substr(peri.dis, 1,3)) %>%
+  mutate(similarity = similarity*100, sigma = sigma*100, .lower.x = .lower.x*100, .upper.x = .upper.x*100, .lower.y = .lower.y*100, .upper.y = .upper.y*100) %>%
+  ggplot2::ggplot(aes(x = similarity, y = sigma, 
+                      fill = dis, color = dis, shape = Period)) + 
+  #drift
+  geom_rect(aes(xmin= 0,xmax = -10, ymin = 0, ymax = 10), 
+            fill = "#009e73", alpha = 0.051, color = "transparent") + 
+  #selection
+  geom_rect(aes(xmin= 0,xmax = 10, ymin = 0, ymax = -10), 
+            fill = "#cc79a7", alpha = 0.051, color = "transparent") + 
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) + 
+  geom_errorbar(aes(ymin = .lower.y, ymax =.upper.y  ), size = 1) + 
+  geom_errorbar(aes(xmin = .lower.x, xmax =.upper.x  ), size= 1) + 
+  geom_point(size = 4,  color = "black") + 
+  theme_bw() + 
+  scale_shape_manual(values = c(21,22)) + 
+  scale_fill_manual("Periodically disturbed", values = my.selection.values[c(1,3)])  + 
+  scale_color_manual("Periodically disturbed",values = my.selection.values[c(1,3)]) + 
+  guides(fill=guide_legend(nrow = 2, override.aes=list(shape=21, alpha = 1))) + 
+    coord_cartesian(xlim = c(-2.5,2.5), ylim = c(-10,10), 
+      expand = F) + 
+   xlab(expression(paste(Delta, "replicate similarity % /day"))) + 
+  ylab(expression(paste(Delta, sigma,"% /day"))) +
+  facet_grid(~model)
+```
+
+
+## summarise rates 
+```{r sigma means}
+sigma_rates %>% group_by(disturbed, Period) %>% summarise(mean_rate = signif(mean(sigma_rate), 2), sd = signif(sd(sigma_rate), 2)) 
+
+time_rates %>% group_by(disturbed, Period) %>% summarise(mean_rate = signif(mean(time_rate), 2), sd = signif(sd(time_rate), 2) ) 
+```
+
+# Sørensen 
+
+## Mean Sør change in both periods 
+```{r}
+mean.sim.rep = metadata_replicates.sor %>% filter(day %in% c(2,28,29,50)) %>% group_by(disturbed, day, selection_group) %>% 
+  summarise(mean.sim = mean(value), sd.sim  = sd(value))
+
+undist.p1 = (mean.sim.rep$mean.sim[2] - mean.sim.rep$mean.sim[1]) / mean.sim.rep$mean.sim[1]*100
+undist.p2 = (mean.sim.rep$mean.sim[4] - mean.sim.rep$mean.sim[3]) / mean.sim.rep$mean.sim[3]*100
+dist.p1 = (mean.sim.rep$mean.sim[6] - mean.sim.rep$mean.sim[5]) / mean.sim.rep$mean.sim[5]*100
+dist.p2 = (mean.sim.rep$mean.sim[8] - mean.sim.rep$mean.sim[7]) / mean.sim.rep$mean.sim[7]*100
+
+data.frame(undist.p1, undist.p2, dist.p1, dist.p2)
+```
+
+
+## model with raw data 
+```{r}
+metadata_replicates_p1_s = metadata_replicates %>% filter(day < 29) %>% filter(distance == "Sørensen")
+metadata_replicates_p2_s = metadata_replicates %>% filter(day > 28) %>% filter(distance == "Sørensen")
+
+model_p1_pred = metadata_replicates_p1_s %>%
+  group_by(selection, nutrient,day) %>%
+  modelr::data_grid(time = seq_range(time, n = 9)) %>%
+  tidybayes::add_fitted_draws(m_p1_s, re_formula = NA) %>% mutate(Period = "Period_1")
+model_p1_pred = tibble(model_p1_pred)
+
+model_p2_pred = metadata_replicates_p2_s %>%
+  group_by(selection, nutrient,day) %>%
+  data_grid(time = seq_range(time, n = 9)) %>%
+  add_fitted_draws(m_p2_s, re_formula = NA) %>% mutate(Period = "Period_2")
+
+both_predictions = bind_rows(model_p1_pred, model_p2_pred)
+both_predictions = tibble(both_predictions)
+
+both_predictions_sor = both_predictions %>% 
+  mutate(selection_group = case_when(day < 29 & selection == "C" ~"UD", 
+                                    day < 29 & selection == "D" ~"DU", 
+                                    day > 28 & selection == "C" ~"DU", 
+                                    day > 28 & selection == "D" ~"UD")) %>% 
+  mutate(regime = paste0(selection_group, nutrient)) %>%
+  mutate(disturbed = case_when(selection == "C" ~"no", 
+                               selection == "D" ~"yes")) %>% 
+  mutate(distance = "Sørensen")
+ 
+metadata_replicates.sor = metadata_replicates %>% 
+  mutate(selection_group = substring(comparison, 1,2)) %>% 
+  mutate(regime = substring(comparison, 1,3)) %>% 
+  filter(distance == "Sørensen") %>% 
+  mutate(selection_group = stringr::str_replace(selection_group, "C", "U"), 
+         regime = stringr::str_replace(regime, "C", "U"), 
+         comparison = stringr::str_replace(comparison, "C", "U")) %>% mutate(regime = factor(regime, levels = c("UDH", "UDL", "DUH", "DUL")))
+
+#saveRDS(object = both_predictions_sor, file = #"both_predictions_sor_replicate_divergence_no_randomeffect.RDS")
+# saveRDS(object = metadata_replicates.sor, file = "metadata_replicates_sor_fixednames.RDS")
+```
+
+```{r}
+both_predictions_sor = readRDS("both_predictions_sor_replicate_divergence_no_randomeffect.RDS")
+metadata_replicates.sor = readRDS("metadata_replicates_sor_fixednames.RDS")
+
+sor.rep.sim = both_predictions_sor %>% 
+  ggplot(aes(x = day, y = value, color = disturbed)) +
+  stat_lineribbon(aes(y = .value, group = Period)) +
+  geom_point(data = metadata_replicates.sor, aes(shape = regime), color = "black", size = 2.5) +
+  geom_point(data = metadata_replicates.sor, aes(color = disturbed, shape = regime), size = 2) +
+  facet_grid(~selection_group) + 
+  my.theme + 
+  ylab("Sørensen replicate similarity divercence") + 
+  scale_color_manual("Periodically disturbed", values = dist.col) + 
+  scale_fill_manual("Confidence interval" ,values = alpha(c("grey86", "grey76", "grey50"),0.5)) + 
+  scale_shape_manual("Regime", values = my.selection.shapes[c(2,1,4,3)]) + 
+  geom_vline(xintercept = 28.5) +
+  theme(legend.key.size = unit(0.3, "cm"), 
+        axis.title.y = element_text(size = 8)) + 
+  coord_cartesian(ylim = c(0.2,0.9), expand = FALSE,  xlim = c(1,51)) 
+```
+
+
+## Sigma estimation
+
+```{r}
+sormod = list(m_p1_s,m_p2_s)
+sigma_rates = data.frame()
+for (i in 1:2) {
+  m = sormod[[i]]
+  post = brms::posterior_samples(m)
+  sigma_rate_model =  post %>% dplyr::transmute(C = b_sigma_time, 
+                                                D = b_sigma_time + `b_sigma_time:selectionD`) %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Sørensen") 
+  colnames(sigma_rate_model) = c("selection","sigma_rate","Period" ,"model" )
+  sigma_rates = bind_rows(sigma_rates, sigma_rate_model)
+}
+
+sigma_rates = sigma_rates %>% mutate(disturbed = case_when(selection == "C" ~"no", 
+                                    selection == "D" ~"yes"), 
+                                    
+                                    peri.dis = paste0(disturbed, " P", substring(Period, 8)))
+
+#saveRDS(object = sigma_rates, file = "simga_rates_sor.RDS")
+```
+
+```{r}
+sigma_rates = readRDS(file = "simga_rates_sor.RDS")
+
+sigma_sor = sigma_rates %>% 
+ggplot(aes(x = sigma_rate, fill = disturbed, group = disturbed, y = disturbed)) +  
+  my.theme + 
+  facet_grid(~Period) + 
+  stat_slab(color = "black", size = 0.4, alpha = 0.9) + 
+  scale_fill_manual("Periodically disturbed", values = dist.col) + 
+  xlab(expression(paste(Delta, sigma ,"/day"))) + 
+  geom_vline(xintercept = 0) + 
+  coord_cartesian(expand = FALSE)  +
+  theme(axis.ticks.y = element_blank(), legend.position = "bottom") + 
+    guides(fill = guide_legend(ncol = 1)) + 
+    scale_x_continuous(breaks = c( -0.05, 0.05))
+```
+
+## replicate divergence change per day
+```{r }
+sormod = list(m_p1_s,m_p2_s)
+
+time_rates = data.frame()
+for (i in 1:2) {
+  m = sormod[[i]]
+  post = posterior_samples(m)
+  if (i == 1) {
+  time_rate_model =  post %>% dplyr::transmute(CDH = b_time, 
+                                               CDL = b_time + `b_time:nutrientL`,  
+                                               DCH = b_time + `b_time:selectionD`, 
+                                               DCL = b_time + `b_time:selectionD` + 
+                                                 `b_time:nutrientL` + `b_time:selectionD:nutrientL`) %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Sørensen", 
+                           selection = substring(key, 1,1), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+  
+  colnames(time_rate_model)[1:2] =c("regime" ,   "time_rate")
+  time_rates = bind_rows(time_rates, time_rate_model)
+  }
+else{
+    time_rate_model =  post %>% dplyr::transmute(DCH = b_time, 
+                                               DCL = b_time + `b_time:nutrientL`, 
+                                               CDH = b_time + `b_time:selectionD`, 
+                                               CDL = b_time + `b_time:selectionD` + `b_time:nutrientL` + `b_time:selectionD:nutrientL`) %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Sørensen", 
+                           selection = substring(key, 2,2), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+    
+    colnames(time_rate_model)[1:2] =c("regime" ,   "time_rate" )
+    time_rates = bind_rows(time_rates, time_rate_model)
+    
+}
+}
+
+#saveRDS(object = time_rates, file = "rep_div_change_sorensen.RDS")
+```
+
+```{r}
+time_rates = readRDS(file = "rep_div_change_sorensen.RDS")
+
+time_sor = time_rates %>% 
+  ggplot(aes(x = time_rate, fill = reg, group = reg, y = disturbed)) +  
+  my.theme + 
+  facet_grid(~Period) + 
+  stat_slab(color = "black",  size = 0.4, alpha = 0.9) + 
+  scale_fill_manual("Periodically disturbed", values = a) + 
+  xlab(expression(paste(Delta, "replicate similarity/day"))) +  
+  geom_vline(xintercept = 0) + 
+  coord_cartesian(expand = FALSE)  +
+  theme(axis.ticks.y = element_blank(), legend.position = "bottom") + 
+    guides(fill = guide_legend(ncol = 1)) +
+  scale_x_continuous(breaks = c(-0.005, 0.005))
+```
+
+## combined plot 
+```{r }
+ggarrange(
+  sor.rep.sim, 
+  ggarrange(time_sor, sigma_sor , labels = c("b", "c"), legend = "none"), 
+  ncol = 1, labels = c("a"), common.legend = TRUE, legend = "right", 
+  heights = c(1.5,1)
+)
+```
+
+## sigma and time rate 
+```{r}
+sormod = list(m_p1_s,m_p2_s)
+quant = data.frame()
+for (i in 1:2) {
+m = sormod[[i]]
+post = posterior_samples(m)
+ if (i == 1) { 
+   time_reg =post %>% dplyr::transmute(CDH_time = b_time, 
+                          CDL_time = b_time + `b_time:nutrientL`,  
+                          DCH_time = b_time + `b_time:selectionD`, 
+                          DCL_time = b_time + `b_time:selectionD` + `b_time:nutrientL` + `b_time:selectionD:nutrientL`) %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), 
+                           model = "Sørensen", 
+                           selection = substring(key, 1,1), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+
+sig_reg = post %>% dplyr::transmute(
+                          CDH_sig = b_sigma_time, 
+                          CDL_sig = b_sigma_time,
+                          DCH_sig =b_sigma_time + `b_sigma_time:selectionD`, 
+                          DCL_sg = b_sigma_time + `b_sigma_time:selectionD`)  %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Sørensen", 
+                           selection = substring(key, 1,1), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+
+colnames(time_reg)[2] = "sim_change"
+colnames(sig_reg)[2] = "sigma_change"
+time_reg$key = seq(1, nrow(time_reg), 1)
+sig_reg$key = seq(1, nrow(sig_reg), 1)
+
+both_p1 = merge.data.frame(time_reg, sig_reg)
+ } else {
+   
+   time_reg =post %>% dplyr::transmute(DCH_time = b_time, 
+                          DCL_time = b_time + `b_time:nutrientL`,  
+                          CDH_time = b_time + `b_time:selectionD`, 
+                          CDL_time = b_time + `b_time:selectionD` + `b_time:nutrientL` + `b_time:selectionD:nutrientL`)  %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Sørensen", 
+                           selection = substring(key, 2,2), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+
+sig_reg = post %>% dplyr::transmute(
+                          DCH_sig = b_sigma_time, 
+                          DCL_sig = b_sigma_time,
+                          CDH_sig =b_sigma_time + `b_sigma_time:selectionD`, 
+                          CDL_sg = b_sigma_time + `b_sigma_time:selectionD`)  %>% 
+  gather(key, value) %>% 
+  group_by(key) %>% mutate(Period = paste0("Period_",i), model = "Sørensen", 
+                           selection = substring(key, 2,2), 
+                           disturbed = case_when(selection == "C" ~"no", 
+                                                 selection == "D" ~"yes"), 
+                           peri.dis = paste0(disturbed, " P", substring(Period, 8)), 
+                           cc = substring(key, 3,3), 
+                           reg = paste0(disturbed, "-", cc))
+
+colnames(time_reg)[2] = "sim_change"
+colnames(sig_reg)[2] = "sigma_change"
+time_reg$key = seq(1, nrow(time_reg), 1)
+sig_reg$key = seq(1, nrow(sig_reg), 1)
+
+both_p2 = merge.data.frame(time_reg, sig_reg)
+ }}
+
+processes = bind_rows(both_p1, both_p2)
+processes_quant = processes %>%
+  mutate(process = case_when( (sim_change >= 0 & sigma_change <= 0) ~ "selection", 
+                                          (sim_change < 0 & sigma_change > 0) ~ "drift", 
+                              TRUE ~ "mix"))
+
+#write.csv(x = processes_quant, file = "drift_sel_perdraw_sørensen.csv")
+```
+
+```{r}
+processes_quant = read.csv("drift_sel_perdraw_sørensen.csv")
+
+sigma = processes_quant %>% group_by(model, selection, peri.dis, Period) %>% 
+  median_qi(sigma = sigma_change, .width = 0.95) 
+
+similarity = processes_quant %>% group_by(model, selection, peri.dis, Period) %>% 
+  median_qi(similarity = sim_change, .width = 0.95)
+
+means_95_quantile = dplyr::left_join(similarity, sigma, by = c("model", "selection", "peri.dis", "Period"))
+```
+
+only means and 95% conf interval
+```{r}
+sorensen_quantile = means_95_quantile %>% mutate(dis  = substr(peri.dis, 1,3)) %>%
+  mutate(similarity = similarity*100, sigma = sigma*100, .lower.x = .lower.x*100, .upper.x = .upper.x*100, .lower.y = .lower.y*100, .upper.y = .upper.y*100) %>%
+  ggplot2::ggplot(aes(x = similarity, y = sigma, 
+                      fill = dis, color = dis, shape = Period)) + 
+  #drift
+  geom_rect(aes(xmin= 0,xmax = -10, ymin = 0, ymax = 10), 
+            fill = "#009e73", alpha = 0.051, color = "transparent") + 
+  #selection
+  geom_rect(aes(xmin= 0,xmax = 10, ymin = 0, ymax = -10), 
+            fill = "#cc79a7", alpha = 0.051, color = "transparent") + 
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0) + 
+  geom_errorbar(aes(ymin = .lower.y, ymax =.upper.y  ), size = 1) + 
+  geom_errorbar(aes(xmin = .lower.x, xmax =.upper.x  ), size= 1) + 
+  geom_point(size = 4,  color = "black") + 
+  theme_bw() + 
+  scale_shape_manual(values = c(21,22)) + 
+  scale_fill_manual("Periodically disturbed", values = my.selection.values[c(1,3)])  + 
+  scale_color_manual("Periodically disturbed",values = my.selection.values[c(1,3)]) + 
+  guides(fill=guide_legend(nrow = 2, override.aes=list(shape=21, alpha = 1))) + 
+    coord_cartesian(xlim = c(-1,1.2), ylim = c(-10,10), 
+      expand = F) + 
+   xlab(expression(paste(Delta, "replicate similarity % /day"))) + 
+  ylab(expression(paste(Delta, sigma,"% /day"))) +
+  facet_grid(~model)
+
+```
+
+
+## combined BC and Sorensen timerate sigma plot 
+```{r}
+ggarrange(bc_quantile, sorensen_quantile, common.legend = TRUE, legend = "right")
+```
+
+```{r sigma means}
+sigma_rates %>% group_by(disturbed, Period) %>% summarise(mean_rate = signif(mean(sigma_rate), 2), sd = signif(sd(sigma_rate), 2)) 
+
+time_rates %>% group_by(disturbed, Period) %>% summarise(mean_rate = signif(mean(time_rate), 2), sd = signif(sd(time_rate), 2) ) 
+time_rates %>% group_by(disturbed, Period) %>% summarise(mean_rate = signif(mean(time_rate), 3), sd = signif(sd(time_rate), 2) ) 
+```
