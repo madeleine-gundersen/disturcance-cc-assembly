@@ -1,10 +1,4 @@
 # disturcance-cc-assembly
 This repository contains the code used in the paper: 
 
-The effect of periodic disturbances and carrying capacity on the significance of selection and drift in complex bacterial communities
-
-
-Authors: Madeleine Stenshorne Gundersen (a), Ian Arthur Morelan (b), Tom Andersen (c), Ingrid Bakke (a) and Olav Vadstein (a)
-a - Department of Biotechnology and Food Science, NTNU - Norwegian University of Science and Technology, Trondheim, Norway
-b -  Independent researcher, Portland, OR, USA
-c - Department of Biosciences, University of Oslo, Norway
+Gundersen, M.S., Morelan, I.A., Andersen, T. et al. The effect of periodic disturbances and carrying capacity on the significance of selection and drift in complex bacterial communities. ISME COMMUN. 1, 53 (2021). https://doi.org/10.1038/s43705-021-00058-4
